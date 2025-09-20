@@ -14,10 +14,37 @@ const GameSpec = struct {
     }
 };
 const Block = enum { none, oob, garbage, z, s, j, l, t, o, i };
-const Direction = enum { north, east, south, west };
+const Direction = enum {
+    north,
+    east,
+    south,
+    west,
+
+    fn rotate_cw(dir: Direction) Direction {
+        return switch (dir) {
+            Direction.north => Direction.east,
+            Direction.east => Direction.south,
+            Direction.south => Direction.west,
+            Direction.west => Direction.north,
+        };
+    }
+
+    fn rotate_ccw(dir: Direction) Direction {
+        return switch (dir) {
+            Direction.north => Direction.west,
+            Direction.east => Direction.north,
+            Direction.south => Direction.east,
+            Direction.west => Direction.south,
+        };
+    }
+};
 const Coordinate = struct {
     x: i8,
     y: i8,
+    fn fromU(x: usize, y: usize) Coordinate {
+        return Coordinate{ .x = @intCast(x), .y = @intCast(y) };
+    }
+
     fn add(self: *const Coordinate, other: Coordinate) Coordinate {
         return Coordinate{
             .x = self.x + other.x,
@@ -256,6 +283,20 @@ const Game = struct {
     rng: rng.LCG,
     current: ?DroppingPiece,
 
+    fn clone(self: *const Game, allocator: std.mem.Allocator) !Game {
+        var copy = Game{
+            .spec = self.spec,
+            .state = self.state,
+            .tetrominos = self.tetrominos,
+            .rng = self.rng,
+            .playfield = self.playfield,
+            .current = self.current,
+        };
+        copy.playfield = try allocator.dupe(Block, self.playfield);
+        // tetrominos NOT copied because expected to be constant.
+        return copy;
+    }
+
     fn indexFor(self: *const Game, coordinate: Coordinate) u8 {
         return @as(u8, @intCast(coordinate.y)) * @as(u8, @intCast(self.spec.dimensions.x)) + @as(u8, @intCast(coordinate.x));
     }
@@ -300,6 +341,52 @@ const Game = struct {
                     }
                 }
             },
+            Action.rotate_cw => {
+                if (self.current != null) {
+                    var piece = self.current.?;
+                    const newOrientation = Direction.rotate_cw(piece.orientation);
+                    piece.orientation = newOrientation;
+
+                    if (self.isValidPiece(piece)) {
+                        self.current.?.orientation = newOrientation;
+                    }
+                }
+            },
+            Action.rotate_ccw => {
+                if (self.current != null) {
+                    var piece = self.current.?;
+                    const newOrientation = Direction.rotate_ccw(piece.orientation);
+                    piece.orientation = newOrientation;
+
+                    if (self.isValidPiece(piece)) {
+                        self.current.?.orientation = newOrientation;
+                    }
+                }
+            },
+            Action.hard_drop => {
+                if (self.current != null) {
+                    var piece = self.current.?;
+                    while (true) {
+                        piece.position.y += 1;
+
+                        if (!self.isValidPiece(piece)) {
+                            self.current.?.position.y = piece.position.y - 1;
+                            // TODO: unify with landing piece code in update()
+                            for (self.current.?.tetromino.pattern) |offset| {
+                                const location = self.current.?.position.add(offset);
+
+                                self.setAt(location, self.current.?.tetromino.block);
+                            }
+                            self.current = .{
+                                .tetromino = self.nextPiece(),
+                                .orientation = Direction.north,
+                                .position = Coordinate{ .x = 5, .y = 1 },
+                            };
+                            break;
+                        }
+                    }
+                }
+            },
             else => {},
         }
     }
@@ -321,6 +408,46 @@ const Game = struct {
     }
 };
 
+test "Game#clone()" {
+    const testTetromino = Tetromino{ .block = Block.s, .pattern = [4]Coordinate{
+        Coordinate{ .x = 1, .y = 0 },
+        Coordinate{ .x = 0, .y = 0 },
+        Coordinate{ .x = 0, .y = -1 },
+        Coordinate{ .x = 1, .y = -1 },
+    } };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const tetrominos: []Tetromino = try allocator.alloc(Tetromino, 1);
+    tetrominos[0] = testTetromino;
+    const spec = GameSpec{ .dimensions = .{ .x = 10, .y = 22 } };
+    const game = Game{
+        .spec = spec,
+        .state = GameState.running,
+        .tetrominos = tetrominos,
+        .rng = rng.LCG.init(123),
+        .playfield = try allocator.alloc(Block, spec.totalCells()),
+        .current = .{
+            .tetromino = testTetromino,
+            .orientation = Direction.north,
+            .position = Coordinate{ .x = 5, .y = 1 },
+        },
+    };
+    @memset(game.playfield, Block.none);
+
+    var gameCopy = try game.clone(allocator);
+
+    gameCopy.current.?.position.x = 3;
+    try expect(game.current.?.position.x == 5);
+
+    gameCopy.playfield[0] = Block.garbage;
+    try expectEqual(Block.none, game.playfield[0]);
+
+    const seed = game.rng.seed;
+    _ = gameCopy.nextPiece();
+    try expectEqual(seed, game.rng.seed);
+}
+
 pub fn main() void {
     run() catch |err| {
         std.debug.print("Allocation failed: {s}\n", .{@errorName(err)});
@@ -335,7 +462,6 @@ fn run() error{OutOfMemory}!void {
     const allocator = arena.allocator();
 
     var ai = AI{ .currentAction = Action.left, .rng = rng.LCG.init(0), .pendingActions = std.ArrayList(Action).empty };
-    // TODO: I think one of these is wrong
     const tetrominos: []Tetromino = try allocator.alloc(Tetromino, 7);
     tetrominos[0] = Tetromino{
         .block = Block.t,
@@ -386,7 +512,7 @@ fn run() error{OutOfMemory}!void {
     tetrominos[5] = Tetromino{
         .block = Block.s,
         .pattern = [4]Coordinate{
-            Coordinate{ .x = 1, .y = 0 },
+            Coordinate{ .x = -1, .y = 0 },
             Coordinate{ .x = 0, .y = 0 },
             Coordinate{ .x = 0, .y = -1 },
             Coordinate{ .x = 1, .y = -1 },
@@ -396,7 +522,7 @@ fn run() error{OutOfMemory}!void {
     tetrominos[6] = Tetromino{
         .block = Block.z,
         .pattern = [4]Coordinate{
-            Coordinate{ .x = 1, .y = -1 },
+            Coordinate{ .x = -1, .y = -1 },
             Coordinate{ .x = 0, .y = -1 },
             Coordinate{ .x = 0, .y = 0 },
             Coordinate{ .x = 1, .y = 0 },
@@ -411,19 +537,101 @@ fn run() error{OutOfMemory}!void {
         .current = null,
     };
     @memset(game.playfield, Block.none);
+    game.current = .{
+        .tetromino = game.nextPiece(),
+        .orientation = Direction.north,
+        .position = Coordinate{ .x = 5, .y = 1 },
+    };
 
     while (game.state == GameState.running) {
+
         // Not in render so that we can dump debug stuff in update()
         const stdout = std.fs.File.stdout();
         _ = stdout.write("\x1b[2J\x1b[H") catch 0;
 
         if (game.current != null and game.current.?.position.y <= 1) {
-            if (ai.rng.nextBool()) {
-                try ai.pendingActions.append(allocator, Action.left);
-                try ai.pendingActions.append(allocator, Action.left);
-            } else {
-                try ai.pendingActions.append(allocator, Action.right);
-                try ai.pendingActions.append(allocator, Action.right);
+            const potentialActions = [_][]const Action{
+                &.{Action.left},
+                &.{ Action.left, Action.left },
+                &.{ Action.left, Action.left, Action.left },
+                &.{Action.right},
+                &.{ Action.right, Action.right },
+                &.{ Action.right, Action.right, Action.right },
+                &.{ Action.rotate_cw, Action.left },
+                &.{ Action.rotate_cw, Action.left, Action.left },
+                &.{ Action.rotate_cw, Action.left, Action.left, Action.left },
+                &.{ Action.rotate_cw, Action.right },
+                &.{ Action.rotate_cw, Action.right, Action.right },
+                &.{ Action.rotate_cw, Action.right, Action.right, Action.right },
+                &.{ Action.rotate_ccw, Action.left },
+                &.{ Action.rotate_ccw, Action.left, Action.left },
+                &.{ Action.rotate_ccw, Action.left, Action.left, Action.left },
+                &.{ Action.rotate_ccw, Action.right },
+                &.{ Action.rotate_ccw, Action.right, Action.right },
+                &.{ Action.rotate_ccw, Action.right, Action.right, Action.right },
+                &.{ Action.rotate_cw, Action.rotate_cw, Action.left },
+                &.{ Action.rotate_cw, Action.rotate_cw, Action.left, Action.left },
+                &.{ Action.rotate_cw, Action.rotate_cw, Action.left, Action.left, Action.left },
+                &.{ Action.rotate_cw, Action.rotate_cw, Action.right },
+                &.{ Action.rotate_cw, Action.rotate_cw, Action.right, Action.right },
+                &.{ Action.rotate_cw, Action.rotate_cw, Action.right, Action.right, Action.right },
+            };
+
+            var minErr: i32 = std.math.maxInt(i32);
+            var bestAction: []const Action = &.{};
+
+            for (potentialActions) |as| {
+                var gameCopy = try game.clone(allocator);
+                for (as) |a| {
+                    gameCopy.apply(a);
+                }
+                gameCopy.apply(Action.hard_drop);
+
+                var heights = try allocator.alloc(usize, spec.dimensions.x);
+                var holes = try allocator.alloc(usize, spec.dimensions.x);
+                var heightTotal: i32 = 0;
+                @memset(heights, 0);
+                @memset(holes, 0);
+
+                for (0..@intCast(gameCopy.spec.dimensions.x)) |x| {
+                    var foundHeight = false;
+                    for (0..@intCast(gameCopy.spec.dimensions.y)) |y| {
+                        const focus = Coordinate.fromU(x, y);
+                        const block = gameCopy.at(focus);
+
+                        if (foundHeight) {
+                            if (block == Block.none) {
+                                holes[x] += 1;
+                            }
+                        } else {
+                            if (block != Block.none) {
+                                foundHeight = true;
+                                heights[x] = spec.dimensions.y - y;
+                                heightTotal += @intCast(heights[x]);
+                            }
+                        }
+                    }
+                }
+
+                var err: i32 = 0;
+                const averageHeight = @divFloor(heightTotal, spec.dimensions.x);
+                for (heights) |height| {
+                    err += std.math.pow(i32, (@as(i32, @intCast(height)) - averageHeight), 2);
+                }
+                for (holes) |hole| {
+                    err += @as(i32, @intCast(hole)) * 5000;
+                }
+                try render(gameCopy);
+                if (err < minErr) {
+                    minErr = err;
+                    bestAction = as;
+                }
+            }
+
+            var i = bestAction.len;
+            while (i > 0) {
+                i -= 1;
+                try ai.pendingActions.append(allocator, bestAction[i]);
             }
         }
         if (ai.pendingActions.pop()) |action| {
