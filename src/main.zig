@@ -372,7 +372,8 @@ const Game = struct {
                         if (!self.isValidPiece(piece)) {
                             self.current.?.position.y = piece.position.y - 1;
                             // TODO: unify with landing piece code in update()
-                            for (self.current.?.tetromino.pattern) |offset| {
+                            const pattern = rotate(self.current.?.orientation, self.current.?.tetromino.pattern);
+                            for (pattern) |offset| {
                                 const location = self.current.?.position.add(offset);
 
                                 self.setAt(location, self.current.?.tetromino.block);
@@ -450,11 +451,17 @@ test "Game#clone()" {
 
 pub fn main() void {
     run() catch |err| {
-        std.debug.print("Allocation failed: {s}\n", .{@errorName(err)});
+        std.debug.print("Error: {s}\n", .{@errorName(err)});
     };
 }
 
-fn run() error{OutOfMemory}!void {
+fn writeFmt(out: anytype, comptime fmt: []const u8, args: anytype) !void {
+    var buf: [4096]u8 = undefined;
+    const s = try std.fmt.bufPrint(&buf, fmt, args);
+    try out.writeAll(s);
+}
+
+fn run() !void {
     const spec = GameSpec{ .dimensions = .{ .x = 10, .y = 22 } };
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -462,6 +469,10 @@ fn run() error{OutOfMemory}!void {
     const allocator = arena.allocator();
 
     var ai = AI{ .currentAction = Action.left, .rng = rng.LCG.init(0), .pendingActions = std.ArrayList(Action).empty };
+    // Initialize debug log file (truncate at start)
+    var log_file = try std.fs.cwd().createFile("ai.log", .{ .truncate = true });
+    defer log_file.close();
+    // We'll write directly to the file using writeAll
     const tetrominos: []Tetromino = try allocator.alloc(Tetromino, 7);
     tetrominos[0] = Tetromino{
         .block = Block.t,
@@ -621,7 +632,12 @@ fn run() error{OutOfMemory}!void {
                 for (holes) |hole| {
                     err += @as(i32, @intCast(hole)) * 5000;
                 }
-                try render(gameCopy);
+                // Debug logging for this candidate (use bufPrint + writeAll)
+                try writeFmt(log_file, "actions: {any}\n", .{as});
+                try writeFmt(log_file, "heights: {any}\n", .{heights});
+                try writeFmt(log_file, "holes: {any}\n", .{holes});
+                try writeFmt(log_file, "error: {d}\n", .{err});
+                try render(gameCopy, log_file);
                 if (err < minErr) {
                     minErr = err;
                     bestAction = as;
@@ -638,7 +654,7 @@ fn run() error{OutOfMemory}!void {
             game.apply(action);
         }
         update(&game);
-        try render(game);
+        try render(game, stdout);
         std.Thread.sleep(1_000_000_00 / 3);
     }
 }
@@ -686,7 +702,7 @@ fn update(game: *Game) void {
     }
 }
 
-fn render(game: Game) error{OutOfMemory}!void {
+fn render(game: Game, out: anytype) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -710,21 +726,21 @@ fn render(game: Game) error{OutOfMemory}!void {
     // Print playfield contents
     const playfield_slice = playfieldRender[0..spec.totalCells()];
 
-    std.debug.print("\n\n\n----------\n", .{});
+    try out.writeAll("\n\n\n----------\n");
     for (0..@as(u8, @intCast(spec.dimensions.y))) |y| {
         for (0..@as(u8, @intCast(spec.dimensions.x))) |x| {
             const idx = game.indexFor(.{ .x = @intCast(x), .y = @intCast(y) });
             const block = playfield_slice[idx];
             switch (block) {
                 Block.none => {
-                    std.debug.print(" ", .{});
+                    try out.writeAll(" ");
                 },
                 else => {
-                    std.debug.print("█", .{});
+                    try out.writeAll("█");
                 },
             }
         }
-        std.debug.print("\n", .{});
+        try out.writeAll("\n");
     }
-    std.debug.print("==========\n", .{});
+    try out.writeAll("==========\n");
 }
