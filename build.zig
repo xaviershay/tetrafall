@@ -114,4 +114,19 @@ pub fn build(b: *std.Build) void {
 
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
+
+    exe.linkLibC();
+
+    // exe.linkSystemLibrary("notcurses-core");
+    // exe.addObjectFile(notcurses_source_path ++ "/build/libnotcurses-core.a");
+
+    exe.addIncludePath(b.path(notcurses_source_path ++ "/include"));
+    const test_filters = b.option([]const []const u8, "test-filter", "Skip tests that do not match any filter") orelse &.{};
+    const tests = b.addTest(.{
+        .filters = test_filters,
+        .root_module = b.createModule(.{ .root_source_file = b.path("src/main.zig"), .target = target, .optimize = optimize }),
+    });
+    const run_tests = b.addRunArtifact(tests);
+    const test_step = b.step("test", "Run library tests");
+    test_step.dependOn(&run_tests.step);
 }

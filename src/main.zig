@@ -1,5 +1,6 @@
 const std = @import("std");
 const expect = std.testing.expect;
+const expectEqual = std.testing.expectEqual;
 
 const GameSpec = struct { width: u8, height: u8, dimensions: Coordinate };
 const Block = enum { none, garbage, z, s, j, l, t, o, i };
@@ -31,7 +32,74 @@ test "coordinate.inBounds()" {
 
 const Tetromino = struct { pattern: [4]Coordinate, block: Block };
 
+pub fn rotate(orientation: Direction, p: [4]Coordinate) [4]Coordinate {
+    // TODO: This only works for size 3 tetrominos! Need to implement I.
+    return switch (orientation) {
+        Direction.north => p,
+        Direction.east => [4]Coordinate{
+            .{ .x = p[0].y * -1, .y = p[0].x },
+            .{ .x = p[1].y * -1, .y = p[1].x },
+            .{ .x = p[2].y * -1, .y = p[2].x },
+            .{ .x = p[3].y * -1, .y = p[3].x },
+        },
+        Direction.west => [4]Coordinate{
+            .{ .x = p[0].y, .y = p[0].x * -1 },
+            .{ .x = p[1].y, .y = p[1].x * -1 },
+            .{ .x = p[2].y, .y = p[2].x * -1 },
+            .{ .x = p[3].y, .y = p[3].x * -1 },
+        },
+        Direction.south => [4]Coordinate{
+            .{ .x = p[0].x * -1, .y = p[0].y * -1 },
+            .{ .x = p[1].x * -1, .y = p[1].y * -1 },
+            .{ .x = p[2].x * -1, .y = p[2].y * -1 },
+            .{ .x = p[3].x * -1, .y = p[3].y * -1 },
+        },
+    };
+}
+
+test "rotate clockwise" {
+    const initial = [4]Coordinate{
+        Coordinate{ .x = 0, .y = -1 },
+        Coordinate{ .x = -1, .y = 0 },
+        Coordinate{ .x = 0, .y = 0 },
+        Coordinate{ .x = 1, .y = 0 },
+    };
+    const expected = [4]Coordinate{
+        Coordinate{ .x = 1, .y = 0 },
+        Coordinate{ .x = 0, .y = -1 },
+        Coordinate{ .x = 0, .y = 0 },
+        Coordinate{ .x = 0, .y = 1 },
+    };
+
+    try expectEqual(expected, rotate(Direction.east, initial));
+}
+
+test "rotate counter-clockwise" {
+    const initial = [4]Coordinate{
+        Coordinate{ .x = 0, .y = -1 },
+        Coordinate{ .x = -1, .y = 0 },
+        Coordinate{ .x = 0, .y = 0 },
+        Coordinate{ .x = 1, .y = 0 },
+    };
+    const expected = [4]Coordinate{
+        Coordinate{ .x = -1, .y = 0 },
+        Coordinate{ .x = 0, .y = 1 },
+        Coordinate{ .x = 0, .y = 0 },
+        Coordinate{ .x = 0, .y = -1 },
+    };
+
+    try expectEqual(expected, rotate(Direction.west, initial));
+}
 const GameState = enum { running, halted };
+const DroppingPiece = struct {
+    position: Coordinate,
+    orientation: Direction,
+    tetromino: Tetromino,
+
+    fn pattern(self: *const DroppingPiece) [4]Coordinate {
+        return rotate(self.orientation, self.tetromino.pattern);
+    }
+};
 
 const Game = struct {
     spec: GameSpec,
@@ -39,11 +107,10 @@ const Game = struct {
     tetrominos: []Tetromino,
     playfield: []Block,
     rng: SimpleRNG,
-    current: ?struct { position: Coordinate, orientation: Direction, tetromino: Tetromino },
+    current: ?DroppingPiece,
 
     fn at(self: *Game, coordinate: Coordinate) Block {
         if (coordinate.inBounds(Coordinate{ .x = 0, .y = 0 }, self.spec.dimensions)) {
-            std.debug.print("{d}x{d} ", .{ coordinate.x, coordinate.y });
             const idx = @as(u8, @intCast(coordinate.y)) * self.spec.width + @as(u8, @intCast(coordinate.x));
             return self.playfield[idx];
         } else {
@@ -61,16 +128,6 @@ const Game = struct {
     fn nextPiece(self: *Game) Tetromino {
         return self.tetrominos[self.rng.nextUint() % self.tetrominos.len];
     }
-};
-
-const t = Tetromino{
-    .block = Block.t,
-    .pattern = [4]Coordinate{
-        Coordinate{ .x = 0, .y = -1 },
-        Coordinate{ .x = -1, .y = 0 },
-        Coordinate{ .x = 0, .y = 0 },
-        Coordinate{ .x = 1, .y = 0 },
-    },
 };
 
 pub fn main() void {
@@ -118,7 +175,7 @@ fn run() error{OutOfMemory}!void {
         .spec = spec,
         .state = GameState.running,
         .tetrominos = tetrominos,
-        .rng = SimpleRNG{ .seed = 1 },
+        .rng = SimpleRNG{ .seed = 123 },
         .playfield = try allocator.alloc(Block, spec.width * spec.height),
         .current = null,
         // .{
@@ -144,18 +201,19 @@ fn update(game: *Game) void {
     if (game.current == null) {
         game.current = .{
             .tetromino = game.nextPiece(),
-            .orientation = Direction.north,
+            .orientation = Direction.east,
             .position = Coordinate{ .x = 5, .y = -1 },
         };
     }
     var p = &game.current.?.position;
     p.y += 1;
 
-    const currentG = game.current.?;
-    const currentT = currentG.tetromino;
+    const currentPiece = game.current.?;
+    const currentT = currentPiece.tetromino;
+    const pattern = currentPiece.pattern();
     var blocked = false;
 
-    for (currentT.pattern) |offset| {
+    for (pattern) |offset| {
         const location = p.add(offset);
 
         if (game.at(location) != Block.none or !location.inBounds(.{ .x = 0, .y = -1 }, game.spec.dimensions)) {
@@ -171,14 +229,14 @@ fn update(game: *Game) void {
     }
 
     if (blocked and game.state == GameState.running) {
-        for (currentT.pattern) |offset| {
+        for (pattern) |offset| {
             const location = p.add(offset);
 
             game.setAt(location, currentT.block);
         }
         game.current = .{
             .tetromino = game.nextPiece(),
-            .orientation = Direction.north,
+            .orientation = Direction.west,
             .position = Coordinate{ .x = 5, .y = 0 },
         };
     }
@@ -196,7 +254,7 @@ fn render(game: Game) error{OutOfMemory}!void {
     if (game.current != null) {
         const current = game.current.?;
         // TODO: rotation
-        for (current.tetromino.pattern) |offset| {
+        for (current.pattern()) |offset| {
             const location = current.position.add(offset);
 
             if (location.inBounds(.{ .x = 0, .y = 0 }, game.spec.dimensions)) {
