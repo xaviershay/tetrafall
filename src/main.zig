@@ -2,6 +2,8 @@ const std = @import("std");
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 
+const rng = @import("simple_rng.zig");
+
 const GameSpec = struct {
     dimensions: Coordinate,
 
@@ -247,7 +249,7 @@ const Game = struct {
     state: GameState,
     tetrominos: []Tetromino,
     playfield: []Block,
-    rng: SimpleRNG,
+    rng: rng.LCG,
     current: ?DroppingPiece,
 
     fn indexFor(self: *const Game, coordinate: Coordinate) u8 {
@@ -280,7 +282,6 @@ pub fn main() void {
 }
 
 fn run() error{OutOfMemory}!void {
-    //var rng = SimpleRNG.init(12345);
     const spec = GameSpec{ .dimensions = .{ .x = 10, .y = 20 } };
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -356,7 +357,7 @@ fn run() error{OutOfMemory}!void {
         .spec = spec,
         .state = GameState.running,
         .tetrominos = tetrominos,
-        .rng = SimpleRNG{ .seed = 123 },
+        .rng = rng.LCG.init(123),
         .playfield = try allocator.alloc(Block, spec.totalCells()),
         .current = null,
         // .{
@@ -465,56 +466,3 @@ fn render(game: Game) error{OutOfMemory}!void {
     }
     std.debug.print("==========\n", .{});
 }
-
-// Simple Linear Congruential Generator (LCG)
-// Based on Numerical Recipes constants - widely tested and portable
-const SimpleRNG = struct {
-    seed: i32,
-
-    // Initialize with seed (uses current timestamp if seed is 0)
-    pub fn init(seed: i32) SimpleRNG {
-        var actual_seed = seed;
-        if (actual_seed == 0) {
-            actual_seed = @intCast(std.time.timestamp() & 0x7FFFFFFF);
-        }
-
-        // Keep within 32-bit signed int range
-        // TODO: why is this necessary? (It was AI generated)
-        actual_seed = @mod(actual_seed, 2147483647);
-        if (actual_seed <= 0) actual_seed += 2147483646;
-
-        return SimpleRNG{ .seed = actual_seed };
-    }
-
-    // Generate next random number (0 to 2147483646)
-    pub fn next(self: *SimpleRNG) i32 {
-        self.seed = @mod(self.seed *% 16807, 2147483647);
-        return self.seed;
-    }
-
-    pub fn nextUint(self: *SimpleRNG) u32 {
-        return @bitCast(self.next());
-    }
-
-    // Generate random float between 0 and 1 (exclusive)
-    pub fn nextFloat(self: *SimpleRNG) f32 {
-        return @as(f32, @floatFromInt(self.next() - 1)) / 2147483646.0;
-    }
-
-    // Generate random integer between min and max (inclusive)
-    pub fn nextInt(self: *SimpleRNG, min: i32, max: i32) i32 {
-        const range = max - min + 1;
-        return @as(i32, @intFromFloat(self.nextFloat() * @as(f32, @floatFromInt(range)))) + min;
-    }
-
-    // Generate random boolean
-    pub fn nextBool(self: *SimpleRNG) bool {
-        return self.nextFloat() < 0.5;
-    }
-
-    // Reset seed
-    pub fn setSeed(self: *SimpleRNG, seed: i32) void {
-        self.seed = @mod(seed, 2147483647);
-        if (self.seed <= 0) self.seed += 2147483646;
-    }
-};
