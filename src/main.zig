@@ -36,7 +36,9 @@ const GameState = enum { running, halted };
 const Game = struct {
     spec: GameSpec,
     state: GameState,
+    tetrominos: []Tetromino,
     playfield: []Block,
+    rng: SimpleRNG,
     current: ?struct { position: Coordinate, orientation: Direction, tetromino: Tetromino },
 
     fn at(self: *Game, coordinate: Coordinate) Block {
@@ -54,6 +56,10 @@ const Game = struct {
             const idx = @as(u8, @intCast(coordinate.y)) * self.spec.width + @as(u8, @intCast(coordinate.x));
             self.playfield[idx] = block;
         }
+    }
+
+    fn nextPiece(self: *Game) Tetromino {
+        return self.tetrominos[self.rng.nextUint() % self.tetrominos.len];
     }
 };
 
@@ -80,9 +86,39 @@ fn run() error{OutOfMemory}!void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
+    const tetrominos: []Tetromino = try allocator.alloc(Tetromino, 3);
+    tetrominos[0] = Tetromino{
+        .block = Block.t,
+        .pattern = [4]Coordinate{
+            Coordinate{ .x = 0, .y = -1 },
+            Coordinate{ .x = -1, .y = 0 },
+            Coordinate{ .x = 0, .y = 0 },
+            Coordinate{ .x = 1, .y = 0 },
+        },
+    };
+    tetrominos[1] = Tetromino{
+        .block = Block.j,
+        .pattern = [4]Coordinate{
+            Coordinate{ .x = -1, .y = -1 },
+            Coordinate{ .x = -1, .y = 0 },
+            Coordinate{ .x = 0, .y = 0 },
+            Coordinate{ .x = 1, .y = 0 },
+        },
+    };
+    tetrominos[2] = Tetromino{
+        .block = Block.l,
+        .pattern = [4]Coordinate{
+            Coordinate{ .x = 1, .y = -1 },
+            Coordinate{ .x = -1, .y = 0 },
+            Coordinate{ .x = 0, .y = 0 },
+            Coordinate{ .x = 1, .y = 0 },
+        },
+    };
     var game = Game{
         .spec = spec,
         .state = GameState.running,
+        .tetrominos = tetrominos,
+        .rng = SimpleRNG{ .seed = 1 },
         .playfield = try allocator.alloc(Block, spec.width * spec.height),
         .current = null,
         // .{
@@ -107,7 +143,7 @@ fn run() error{OutOfMemory}!void {
 fn update(game: *Game) void {
     if (game.current == null) {
         game.current = .{
-            .tetromino = t,
+            .tetromino = game.nextPiece(),
             .orientation = Direction.north,
             .position = Coordinate{ .x = 5, .y = -1 },
         };
@@ -141,7 +177,7 @@ fn update(game: *Game) void {
             game.setAt(location, currentT.block);
         }
         game.current = .{
-            .tetromino = t,
+            .tetromino = game.nextPiece(),
             .orientation = Direction.north,
             .position = Coordinate{ .x = 5, .y = 0 },
         };
@@ -204,6 +240,7 @@ const SimpleRNG = struct {
         }
 
         // Keep within 32-bit signed int range
+        // TODO: why is this necessary? (It was AI generated)
         actual_seed = @mod(actual_seed, 2147483647);
         if (actual_seed <= 0) actual_seed += 2147483646;
 
@@ -212,8 +249,12 @@ const SimpleRNG = struct {
 
     // Generate next random number (0 to 2147483646)
     pub fn next(self: *SimpleRNG) i32 {
-        self.seed = @mod(self.seed * 16807, 2147483647);
+        self.seed = @mod(self.seed *% 16807, 2147483647);
         return self.seed;
+    }
+
+    pub fn nextUint(self: *SimpleRNG) u32 {
+        return @bitCast(self.next());
     }
 
     // Generate random float between 0 and 1 (exclusive)
