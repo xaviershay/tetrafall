@@ -470,9 +470,20 @@ fn run() !void {
 
     var ai = AI{ .currentAction = Action.left, .rng = rng.LCG.init(0), .pendingActions = std.ArrayList(Action).empty };
     // Initialize debug log file (truncate at start)
-    var log_file = try std.fs.cwd().createFile("ai.log", .{ .truncate = true });
-    defer log_file.close();
-    // We'll write directly to the file using writeAll
+    //var log_file = try std.fs.cwd().createFile("ai.log", .{ .truncate = true });
+    //defer log_file.close();
+
+    // Noop writer that discards all writes
+    const NoopWriter = struct {
+        const Self = @This();
+
+        pub fn writeAll(self: Self, bytes: []const u8) !void {
+            _ = self;
+            _ = bytes;
+            // Do nothing - this is a noop writer
+        }
+    };
+    const log_file = NoopWriter{};
     const tetrominos: []Tetromino = try allocator.alloc(Tetromino, 7);
     tetrominos[0] = Tetromino{
         .block = Block.t,
@@ -598,46 +609,52 @@ fn run() !void {
                 }
                 gameCopy.apply(Action.hard_drop);
 
-                var heights = try allocator.alloc(usize, spec.dimensions.x);
-                var holes = try allocator.alloc(usize, spec.dimensions.x);
-                var heightTotal: i32 = 0;
-                @memset(heights, 0);
-                @memset(holes, 0);
+                var err: i32 = 0;
+                if (gameCopy.state == GameState.halted) {
+                    err = std.math.maxInt(i32);
+                } else {
+                    var heights = try allocator.alloc(usize, spec.dimensions.x);
+                    var holes = try allocator.alloc(usize, spec.dimensions.x);
+                    var heightTotal: i32 = 0;
+                    @memset(heights, 0);
+                    @memset(holes, 0);
 
-                for (0..@intCast(gameCopy.spec.dimensions.x)) |x| {
-                    var foundHeight = false;
-                    for (0..@intCast(gameCopy.spec.dimensions.y)) |y| {
-                        const focus = Coordinate.fromU(x, y);
-                        const block = gameCopy.at(focus);
+                    for (0..@intCast(gameCopy.spec.dimensions.x)) |x| {
+                        var foundHeight = false;
+                        for (0..@intCast(gameCopy.spec.dimensions.y)) |y| {
+                            const focus = Coordinate.fromU(x, y);
+                            const block = gameCopy.at(focus);
 
-                        if (foundHeight) {
-                            if (block == Block.none) {
-                                holes[x] += 1;
-                            }
-                        } else {
-                            if (block != Block.none) {
-                                foundHeight = true;
-                                heights[x] = spec.dimensions.y - y;
-                                heightTotal += @intCast(heights[x]);
+                            if (foundHeight) {
+                                if (block == Block.none) {
+                                    holes[x] += 1;
+                                }
+                            } else {
+                                if (block != Block.none) {
+                                    foundHeight = true;
+                                    heights[x] = spec.dimensions.y - y;
+                                    heightTotal += @intCast(heights[x]);
+                                }
                             }
                         }
                     }
-                }
 
-                var err: i32 = 0;
-                const averageHeight = @divFloor(heightTotal, spec.dimensions.x);
-                for (heights) |height| {
-                    err += std.math.pow(i32, (@as(i32, @intCast(height)) - averageHeight), 2);
+                    const averageHeight = @divFloor(heightTotal, spec.dimensions.x);
+                    for (heights) |height| {
+                        err += std.math.pow(i32, (@as(i32, @intCast(height)) - averageHeight), 2);
+                    }
+                    for (holes) |hole| {
+                        err += @as(i32, @intCast(hole)) * 5;
+                    }
+                    // Debug logging for this candidate (use bufPrint + writeAll)
+                    try writeFmt(log_file, "actions: {any}\n", .{as});
+                    try writeFmt(log_file, "heights: {any}\n", .{heights});
+                    try writeFmt(log_file, "holes: {any}\n", .{holes});
                 }
-                for (holes) |hole| {
-                    err += @as(i32, @intCast(hole)) * 5000;
-                }
-                // Debug logging for this candidate (use bufPrint + writeAll)
-                try writeFmt(log_file, "actions: {any}\n", .{as});
-                try writeFmt(log_file, "heights: {any}\n", .{heights});
-                try writeFmt(log_file, "holes: {any}\n", .{holes});
                 try writeFmt(log_file, "error: {d}\n", .{err});
+                gameCopy.current = null;
                 try render(gameCopy, log_file);
+                try writeFmt(log_file, "\n\n", .{});
                 if (err < minErr) {
                     minErr = err;
                     bestAction = as;
@@ -650,12 +667,16 @@ fn run() !void {
                 try ai.pendingActions.append(allocator, bestAction[i]);
             }
         }
-        if (ai.pendingActions.pop()) |action| {
+        //if (ai.pendingActions.pop()) |action| {
+        //    game.apply(action);
+        //}
+        while (ai.pendingActions.pop()) |action| {
             game.apply(action);
         }
         update(&game);
+        std.debug.print("\n\n", .{});
         try render(game, stdout);
-        std.Thread.sleep(1_000_000_00 / 3);
+        std.Thread.sleep(1_000_000_00 / 4);
     }
 }
 
@@ -726,7 +747,7 @@ fn render(game: Game, out: anytype) !void {
     // Print playfield contents
     const playfield_slice = playfieldRender[0..spec.totalCells()];
 
-    try out.writeAll("\n\n\n----------\n");
+    try out.writeAll("----------\n");
     for (0..@as(u8, @intCast(spec.dimensions.y))) |y| {
         for (0..@as(u8, @intCast(spec.dimensions.x))) |x| {
             const idx = game.indexFor(.{ .x = @intCast(x), .y = @intCast(y) });
