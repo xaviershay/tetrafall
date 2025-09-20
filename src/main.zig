@@ -4,7 +4,7 @@ const expectEqual = std.testing.expectEqual;
 
 const rng = @import("simple_rng.zig");
 
-const AI = struct { rng: rng.LCG, currentAction: Action };
+const AI = struct { rng: rng.LCG, currentAction: Action, pendingActions: std.ArrayList(Action) };
 
 const GameSpec = struct {
     dimensions: Coordinate,
@@ -329,11 +329,13 @@ pub fn main() void {
 
 fn run() error{OutOfMemory}!void {
     const spec = GameSpec{ .dimensions = .{ .x = 10, .y = 22 } };
-    var ai = AI{ .currentAction = Action.left, .rng = rng.LCG.init(0) };
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
+
+    var ai = AI{ .currentAction = Action.left, .rng = rng.LCG.init(0), .pendingActions = std.ArrayList(Action).empty };
+    // TODO: I think one of these is wrong
     const tetrominos: []Tetromino = try allocator.alloc(Tetromino, 7);
     tetrominos[0] = Tetromino{
         .block = Block.t,
@@ -417,12 +419,16 @@ fn run() error{OutOfMemory}!void {
 
         if (game.current != null and game.current.?.position.y <= 1) {
             if (ai.rng.nextBool()) {
-                ai.currentAction = Action.left;
+                try ai.pendingActions.append(allocator, Action.left);
+                try ai.pendingActions.append(allocator, Action.left);
             } else {
-                ai.currentAction = Action.right;
+                try ai.pendingActions.append(allocator, Action.right);
+                try ai.pendingActions.append(allocator, Action.right);
             }
         }
-        game.apply(ai.currentAction);
+        if (ai.pendingActions.pop()) |action| {
+            game.apply(action);
+        }
         update(&game);
         try render(game);
         std.Thread.sleep(1_000_000_00 / 3);
