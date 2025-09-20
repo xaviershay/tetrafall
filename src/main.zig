@@ -2,7 +2,13 @@ const std = @import("std");
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 
-const GameSpec = struct { width: u8, height: u8, dimensions: Coordinate };
+const GameSpec = struct {
+    dimensions: Coordinate,
+
+    fn totalCells(self: *const GameSpec) u8 {
+        return @as(u8, @intCast(self.dimensions.x)) * @as(u8, @intCast(self.dimensions.y));
+    }
+};
 const Block = enum { none, garbage, z, s, j, l, t, o, i };
 const Direction = enum { north, east, south, west };
 const Coordinate = struct {
@@ -244,10 +250,13 @@ const Game = struct {
     rng: SimpleRNG,
     current: ?DroppingPiece,
 
+    fn indexFor(self: *const Game, coordinate: Coordinate) u8 {
+        return @as(u8, @intCast(coordinate.y)) * @as(u8, @intCast(self.spec.dimensions.x)) + @as(u8, @intCast(coordinate.x));
+    }
+
     fn at(self: *Game, coordinate: Coordinate) Block {
         if (coordinate.inBounds(Coordinate{ .x = 0, .y = 0 }, self.spec.dimensions)) {
-            const idx = @as(u8, @intCast(coordinate.y)) * self.spec.width + @as(u8, @intCast(coordinate.x));
-            return self.playfield[idx];
+            return self.playfield[self.indexFor(coordinate)];
         } else {
             return Block.none;
         }
@@ -255,8 +264,7 @@ const Game = struct {
 
     fn setAt(self: *Game, coordinate: Coordinate, block: Block) void {
         if (coordinate.inBounds(Coordinate{ .x = 0, .y = 0 }, self.spec.dimensions)) {
-            const idx = @as(u8, @intCast(coordinate.y)) * self.spec.width + @as(u8, @intCast(coordinate.x));
-            self.playfield[idx] = block;
+            self.playfield[self.indexFor(coordinate)] = block;
         }
     }
 
@@ -273,12 +281,12 @@ pub fn main() void {
 
 fn run() error{OutOfMemory}!void {
     //var rng = SimpleRNG.init(12345);
-    const spec = GameSpec{ .width = 10, .height = 10, .dimensions = .{ .x = 10, .y = 10 } };
+    const spec = GameSpec{ .dimensions = .{ .x = 10, .y = 20 } };
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    const tetrominos: []Tetromino = try allocator.alloc(Tetromino, 4);
+    const tetrominos: []Tetromino = try allocator.alloc(Tetromino, 7);
     tetrominos[0] = Tetromino{
         .block = Block.t,
         .pattern = [4]Coordinate{
@@ -315,12 +323,41 @@ fn run() error{OutOfMemory}!void {
             Coordinate{ .x = -1, .y = 0 },
         },
     };
+    tetrominos[4] = Tetromino{
+        .block = Block.o,
+        .pattern = [4]Coordinate{
+            Coordinate{ .x = 1, .y = 0 },
+            Coordinate{ .x = 0, .y = -1 },
+            Coordinate{ .x = 0, .y = 0 },
+            Coordinate{ .x = 0, .y = 1 },
+        },
+    };
+
+    tetrominos[5] = Tetromino{
+        .block = Block.s,
+        .pattern = [4]Coordinate{
+            Coordinate{ .x = 1, .y = 0 },
+            Coordinate{ .x = 0, .y = 0 },
+            Coordinate{ .x = 0, .y = -1 },
+            Coordinate{ .x = 1, .y = -1 },
+        },
+    };
+
+    tetrominos[6] = Tetromino{
+        .block = Block.z,
+        .pattern = [4]Coordinate{
+            Coordinate{ .x = 1, .y = -1 },
+            Coordinate{ .x = 0, .y = -1 },
+            Coordinate{ .x = 0, .y = 0 },
+            Coordinate{ .x = 1, .y = 0 },
+        },
+    };
     var game = Game{
         .spec = spec,
         .state = GameState.running,
         .tetrominos = tetrominos,
         .rng = SimpleRNG{ .seed = 123 },
-        .playfield = try allocator.alloc(Block, spec.width * spec.height),
+        .playfield = try allocator.alloc(Block, spec.totalCells()),
         .current = null,
         // .{
         //     .position = Coordinate{ .x = 0, .y = 0 },
@@ -392,7 +429,7 @@ fn render(game: Game) error{OutOfMemory}!void {
     const allocator = arena.allocator();
 
     const spec = game.spec;
-    const playfieldRender = try allocator.alloc(Block, spec.width * spec.height);
+    const playfieldRender = try allocator.alloc(Block, spec.totalCells());
     @memcpy(playfieldRender, game.playfield);
 
     if (game.current != null) {
@@ -402,18 +439,18 @@ fn render(game: Game) error{OutOfMemory}!void {
             const location = current.position.add(offset);
 
             if (location.inBounds(.{ .x = 0, .y = 0 }, game.spec.dimensions)) {
-                playfieldRender[@as(u8, @intCast(location.y)) * spec.width + @as(u8, @intCast(location.x))] = current.tetromino.block;
+                playfieldRender[game.indexFor(location)] = current.tetromino.block;
             }
         }
     }
 
     // Print playfield contents
-    const playfield_slice = playfieldRender[0 .. spec.width * spec.height];
+    const playfield_slice = playfieldRender[0..spec.totalCells()];
 
     std.debug.print("\n\n\n----------\n", .{});
-    for (0..spec.height) |y| {
-        for (0..spec.width) |x| {
-            const idx = y * spec.width + x;
+    for (0..@as(u8, @intCast(spec.dimensions.y))) |y| {
+        for (0..@as(u8, @intCast(spec.dimensions.x))) |x| {
+            const idx = game.indexFor(.{ .x = @intCast(x), .y = @intCast(y) });
             const block = playfield_slice[idx];
             switch (block) {
                 Block.none => {
