@@ -11,7 +11,7 @@ const GameSpec = struct {
         return @as(u8, @intCast(self.dimensions.x)) * @as(u8, @intCast(self.dimensions.y));
     }
 };
-const Block = enum { none, garbage, z, s, j, l, t, o, i };
+const Block = enum { none, oob, garbage, z, s, j, l, t, o, i };
 const Direction = enum { north, east, south, west };
 const Coordinate = struct {
     x: i8,
@@ -244,6 +244,8 @@ const DroppingPiece = struct {
     }
 };
 
+const Action = enum { left, right, rotate_cw, rotate_ccw, soft_drop, hard_drop };
+
 const Game = struct {
     spec: GameSpec,
     state: GameState,
@@ -256,11 +258,11 @@ const Game = struct {
         return @as(u8, @intCast(coordinate.y)) * @as(u8, @intCast(self.spec.dimensions.x)) + @as(u8, @intCast(coordinate.x));
     }
 
-    fn at(self: *Game, coordinate: Coordinate) Block {
+    fn at(self: *const Game, coordinate: Coordinate) Block {
         if (coordinate.inBounds(Coordinate{ .x = 0, .y = 0 }, self.spec.dimensions)) {
             return self.playfield[self.indexFor(coordinate)];
         } else {
-            return Block.none;
+            return Block.oob;
         }
     }
 
@@ -273,6 +275,48 @@ const Game = struct {
     fn nextPiece(self: *Game) Tetromino {
         return self.tetrominos[self.rng.nextUint() % self.tetrominos.len];
     }
+
+    fn apply(self: *Game, action: Action) void {
+        switch (action) {
+            Action.left => {
+                if (self.current != null) {
+                    var piece = self.current.?;
+                    piece.position.x -= 1;
+
+                    if (self.isValidPiece(piece)) {
+                        self.current.?.position.x -= 1;
+                    }
+                }
+            },
+            Action.right => {
+                if (self.current != null) {
+                    var piece = self.current.?;
+                    piece.position.x += 1;
+
+                    if (self.isValidPiece(piece)) {
+                        self.current.?.position.x += 1;
+                    }
+                }
+            },
+            else => {},
+        }
+    }
+
+    fn isValidPiece(self: *const Game, piece: DroppingPiece) bool {
+        const pattern = rotate(piece.orientation, piece.tetromino.pattern);
+
+        var blocked = false;
+
+        for (pattern) |offset| {
+            const location = piece.position.add(offset);
+
+            if (self.at(location) != Block.none) {
+                blocked = true;
+                break;
+            }
+        }
+        return !blocked;
+    }
 };
 
 pub fn main() void {
@@ -282,7 +326,7 @@ pub fn main() void {
 }
 
 fn run() error{OutOfMemory}!void {
-    const spec = GameSpec{ .dimensions = .{ .x = 10, .y = 20 } };
+    const spec = GameSpec{ .dimensions = .{ .x = 10, .y = 22 } };
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -368,6 +412,7 @@ fn run() error{OutOfMemory}!void {
         const stdout = std.fs.File.stdout();
         _ = stdout.write("\x1b[2J\x1b[H") catch 0;
 
+        game.apply(Action.right);
         update(&game);
         try render(game);
         std.Thread.sleep(1_000_000_00 / 3);
@@ -379,7 +424,7 @@ fn update(game: *Game) void {
         game.current = .{
             .tetromino = game.nextPiece(),
             .orientation = Direction.north,
-            .position = Coordinate{ .x = 5, .y = -1 },
+            .position = Coordinate{ .x = 5, .y = 1 },
         };
     }
     var p = &game.current.?.position;
@@ -393,13 +438,11 @@ fn update(game: *Game) void {
     for (pattern) |offset| {
         const location = p.add(offset);
 
-        if (game.at(location) != Block.none or !location.inBounds(.{ .x = 0, .y = -1 }, game.spec.dimensions)) {
+        if (game.at(location) != Block.none) {
             p.y -= 1;
             blocked = true;
-            // TODO: this should be < not <= and there's a flashing thing that happens at the end, so a bug somewhere.
-            if (p.y <= 0) {
+            if (p.y <= 1) {
                 game.state = GameState.halted;
-                game.current = null;
             }
             break;
         }
@@ -414,7 +457,7 @@ fn update(game: *Game) void {
         game.current = .{
             .tetromino = game.nextPiece(),
             .orientation = Direction.north,
-            .position = Coordinate{ .x = 5, .y = 0 },
+            .position = Coordinate{ .x = 5, .y = 1 },
         };
     }
 }
