@@ -4,6 +4,8 @@ const expectEqual = std.testing.expectEqual;
 
 const rng = @import("simple_rng.zig");
 
+const AI = struct { rng: rng.LCG, currentAction: Action };
+
 const GameSpec = struct {
     dimensions: Coordinate,
 
@@ -327,6 +329,7 @@ pub fn main() void {
 
 fn run() error{OutOfMemory}!void {
     const spec = GameSpec{ .dimensions = .{ .x = 10, .y = 22 } };
+    var ai = AI{ .currentAction = Action.left, .rng = rng.LCG.init(0) };
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -412,7 +415,14 @@ fn run() error{OutOfMemory}!void {
         const stdout = std.fs.File.stdout();
         _ = stdout.write("\x1b[2J\x1b[H") catch 0;
 
-        game.apply(Action.right);
+        if (game.current != null and game.current.?.position.y <= 1) {
+            if (ai.rng.nextBool()) {
+                ai.currentAction = Action.left;
+            } else {
+                ai.currentAction = Action.right;
+            }
+        }
+        game.apply(ai.currentAction);
         update(&game);
         try render(game);
         std.Thread.sleep(1_000_000_00 / 3);
