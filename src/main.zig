@@ -32,7 +32,39 @@ test "coordinate.inBounds()" {
 
 const Tetromino = struct { pattern: [4]Coordinate, block: Block };
 
+fn maximum(comptime T: type, a: T, b: T) T {
+    return if (a > b) a else b;
+}
 pub fn rotate(orientation: Direction, p: [4]Coordinate) [4]Coordinate {
+    var min: Coordinate = .{ .x = 0, .y = 0 };
+    var max: Coordinate = .{ .x = 0, .y = 0 };
+    for (p) |coord| {
+        if (coord.x < min.x) {
+            min.x = coord.x;
+        }
+        if (coord.y < min.y) {
+            min.y = coord.y;
+        }
+        if (coord.x > max.x) {
+            max.x = coord.x;
+        }
+        if (coord.y > max.y) {
+            max.y = coord.y;
+        }
+    }
+
+    const longestEdge = maximum(i8, max.x - min.x, max.y - min.y) + 1;
+
+    return switch (longestEdge) {
+        3 => rotate3x3(orientation, p),
+        4 => rotate4x4(orientation, p),
+        else => {
+            std.debug.print("longestEdge: {any} {any}\n", .{ min, max });
+            @panic("Malformed pattern");
+        },
+    };
+}
+pub fn rotate3x3(orientation: Direction, p: [4]Coordinate) [4]Coordinate {
     // TODO: This only works for size 3 tetrominos! Need to implement I.
     return switch (orientation) {
         Direction.north => p,
@@ -57,7 +89,33 @@ pub fn rotate(orientation: Direction, p: [4]Coordinate) [4]Coordinate {
     };
 }
 
-test "rotate clockwise" {
+pub fn rotate4x4(orientation: Direction, p: [4]Coordinate) [4]Coordinate {
+    // Rotates a 4x4 grid around its center (0.5, 0.5)
+    // Grid top-left corner is at (-1, -1), bottom-right at (2, 2)
+    return switch (orientation) {
+        Direction.north => p,
+        Direction.east => [4]Coordinate{
+            .{ .x = -p[0].y + 1, .y = p[0].x + 1 },
+            .{ .x = -p[1].y + 1, .y = p[1].x + 1 },
+            .{ .x = -p[2].y + 1, .y = p[2].x + 1 },
+            .{ .x = -p[3].y + 1, .y = p[3].x + 1 },
+        },
+        Direction.west => [4]Coordinate{
+            .{ .x = p[0].y - 1, .y = -p[0].x + 1 },
+            .{ .x = p[1].y - 1, .y = -p[1].x + 1 },
+            .{ .x = p[2].y - 1, .y = -p[2].x + 1 },
+            .{ .x = p[3].y - 1, .y = -p[3].x + 1 },
+        },
+        Direction.south => [4]Coordinate{
+            .{ .x = -p[0].x + 1, .y = -p[0].y + 1 },
+            .{ .x = -p[1].x + 1, .y = -p[1].y + 1 },
+            .{ .x = -p[2].x + 1, .y = -p[2].y + 1 },
+            .{ .x = -p[3].x + 1, .y = -p[3].y + 1 },
+        },
+    };
+}
+
+test "rotate clockwise 3x3" {
     const initial = [4]Coordinate{
         Coordinate{ .x = 0, .y = -1 },
         Coordinate{ .x = -1, .y = 0 },
@@ -74,7 +132,7 @@ test "rotate clockwise" {
     try expectEqual(expected, rotate(Direction.east, initial));
 }
 
-test "rotate counter-clockwise" {
+test "rotate counter-clockwise 3x3" {
     const initial = [4]Coordinate{
         Coordinate{ .x = 0, .y = -1 },
         Coordinate{ .x = -1, .y = 0 },
@@ -89,6 +147,63 @@ test "rotate counter-clockwise" {
     };
 
     try expectEqual(expected, rotate(Direction.west, initial));
+}
+
+test "rotate4x4 clockwise I-piece" {
+    // I-piece in horizontal position in 4x4 grid
+    const initial = [4]Coordinate{
+        Coordinate{ .x = -1, .y = 1 },
+        Coordinate{ .x = 0, .y = 1 },
+        Coordinate{ .x = 1, .y = 1 },
+        Coordinate{ .x = 2, .y = 1 },
+    };
+    // After 90° clockwise rotation should be vertical
+    const expected = [4]Coordinate{
+        Coordinate{ .x = 0, .y = 0 },
+        Coordinate{ .x = 0, .y = 1 },
+        Coordinate{ .x = 0, .y = 2 },
+        Coordinate{ .x = 0, .y = 3 },
+    };
+
+    try expectEqual(expected, rotate(Direction.east, initial));
+}
+
+test "rotate4x4 counter-clockwise I-piece" {
+    // I-piece in horizontal position in 4x4 grid
+    const initial = [4]Coordinate{
+        Coordinate{ .x = -1, .y = 1 },
+        Coordinate{ .x = 0, .y = 1 },
+        Coordinate{ .x = 1, .y = 1 },
+        Coordinate{ .x = 2, .y = 1 },
+    };
+    // After 90° counter-clockwise rotation should be vertical
+    const expected = [4]Coordinate{
+        Coordinate{ .x = 0, .y = 2 },
+        Coordinate{ .x = 0, .y = 1 },
+        Coordinate{ .x = 0, .y = 0 },
+        Coordinate{ .x = 0, .y = -1 },
+    };
+
+    try expectEqual(expected, rotate(Direction.west, initial));
+}
+
+test "rotate4x4 180 degrees I-piece" {
+    // I-piece in horizontal position in 4x4 grid
+    const initial = [4]Coordinate{
+        Coordinate{ .x = -1, .y = 1 },
+        Coordinate{ .x = 0, .y = 1 },
+        Coordinate{ .x = 1, .y = 1 },
+        Coordinate{ .x = 2, .y = 1 },
+    };
+    // After 180° rotation should be horizontal but flipped
+    const expected = [4]Coordinate{
+        Coordinate{ .x = 2, .y = 0 },
+        Coordinate{ .x = 1, .y = 0 },
+        Coordinate{ .x = 0, .y = 0 },
+        Coordinate{ .x = -1, .y = 0 },
+    };
+
+    try expectEqual(expected, rotate(Direction.south, initial));
 }
 const GameState = enum { running, halted };
 const DroppingPiece = struct {
@@ -143,7 +258,7 @@ fn run() error{OutOfMemory}!void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    const tetrominos: []Tetromino = try allocator.alloc(Tetromino, 3);
+    const tetrominos: []Tetromino = try allocator.alloc(Tetromino, 4);
     tetrominos[0] = Tetromino{
         .block = Block.t,
         .pattern = [4]Coordinate{
@@ -169,6 +284,15 @@ fn run() error{OutOfMemory}!void {
             Coordinate{ .x = -1, .y = 0 },
             Coordinate{ .x = 0, .y = 0 },
             Coordinate{ .x = 1, .y = 0 },
+        },
+    };
+    tetrominos[3] = Tetromino{
+        .block = Block.i,
+        .pattern = [4]Coordinate{
+            Coordinate{ .x = 2, .y = 0 },
+            Coordinate{ .x = 1, .y = 0 },
+            Coordinate{ .x = 0, .y = 0 },
+            Coordinate{ .x = -1, .y = 0 },
         },
     };
     var game = Game{
@@ -201,7 +325,7 @@ fn update(game: *Game) void {
     if (game.current == null) {
         game.current = .{
             .tetromino = game.nextPiece(),
-            .orientation = Direction.east,
+            .orientation = Direction.north,
             .position = Coordinate{ .x = 5, .y = -1 },
         };
     }
@@ -236,7 +360,7 @@ fn update(game: *Game) void {
         }
         game.current = .{
             .tetromino = game.nextPiece(),
-            .orientation = Direction.west,
+            .orientation = Direction.north,
             .position = Coordinate{ .x = 5, .y = 0 },
         };
     }
