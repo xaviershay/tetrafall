@@ -56,6 +56,9 @@ pub fn rotate(orientation: Direction, p: [4]Coordinate) [4]Coordinate {
     const longestEdge = maximum(i8, max.x - min.x, max.y - min.y) + 1;
 
     return switch (longestEdge) {
+        // A square is the only valid 4 coordinate pattern with edge length 2,
+        // and is symmetric under rotation.
+        2 => p,
         3 => rotate3x3(orientation, p),
         4 => rotate4x4(orientation, p),
         else => {
@@ -113,6 +116,23 @@ pub fn rotate4x4(orientation: Direction, p: [4]Coordinate) [4]Coordinate {
             .{ .x = -p[3].x + 1, .y = -p[3].y + 1 },
         },
     };
+}
+
+test "rotate 2x2" {
+    const initial = [4]Coordinate{
+        Coordinate{ .x = 0, .y = 0 },
+        Coordinate{ .x = 1, .y = 0 },
+        Coordinate{ .x = 0, .y = -1 },
+        Coordinate{ .x = 1, .y = -1 },
+    };
+    const expected = [4]Coordinate{
+        Coordinate{ .x = 0, .y = 0 },
+        Coordinate{ .x = 1, .y = 0 },
+        Coordinate{ .x = 0, .y = -1 },
+        Coordinate{ .x = 1, .y = -1 },
+    };
+
+    try expectEqual(expected, rotate(Direction.east, initial));
 }
 
 test "rotate clockwise 3x3" {
