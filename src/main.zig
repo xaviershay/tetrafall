@@ -319,6 +319,48 @@ const Game = struct {
         return self.tetrominos[self.rng.nextUint() % self.tetrominos.len];
     }
 
+    fn lockCurrentPiece(self: *Game) void {
+        //std.debug.print("===> LOCKING PIECE <=== ", .{});
+        // Copy current piece to playfield
+        const pattern = rotate(self.current.?.orientation, self.current.?.tetromino.pattern);
+        for (pattern) |offset| {
+            const location = self.current.?.position.add(offset);
+
+            self.setAt(location, self.current.?.tetromino.block);
+        }
+
+        // Score any lines.
+        for (0..@intCast(self.spec.dimensions.y)) |y| {
+            const rowIndex = @as(u8, @intCast(self.spec.dimensions.y)) - y - 1;
+            var line = true;
+            var empty = true;
+            for (0..@intCast(self.spec.dimensions.x)) |x| {
+                //std.debug.print("{any} ", .{self.at(Coordinate.fromU(x, rowIndex))});
+                if (self.at(Coordinate.fromU(x, rowIndex)) == Block.none) {
+                    line = false;
+                } else {
+                    empty = false;
+                }
+                if (!line and !empty) break;
+            }
+            //std.debug.print("\n", .{});
+            if ((line or empty) and rowIndex > 0) {
+                for (0..@intCast(self.spec.dimensions.x)) |x| {
+                    const from = Coordinate.fromU(x, rowIndex - 1);
+                    const to = Coordinate.fromU(x, rowIndex);
+                    self.setAt(to, self.at(from));
+                    self.setAt(from, Block.none);
+                }
+            }
+        }
+
+        self.current = .{
+            .tetromino = self.nextPiece(),
+            .orientation = Direction.north,
+            .position = Coordinate{ .x = 5, .y = 1 },
+        };
+    }
+
     fn apply(self: *Game, action: Action) void {
         switch (action) {
             Action.left => {
@@ -371,18 +413,7 @@ const Game = struct {
 
                         if (!self.isValidPiece(piece)) {
                             self.current.?.position.y = piece.position.y - 1;
-                            // TODO: unify with landing piece code in update()
-                            const pattern = rotate(self.current.?.orientation, self.current.?.tetromino.pattern);
-                            for (pattern) |offset| {
-                                const location = self.current.?.position.add(offset);
-
-                                self.setAt(location, self.current.?.tetromino.block);
-                            }
-                            self.current = .{
-                                .tetromino = self.nextPiece(),
-                                .orientation = Direction.north,
-                                .position = Coordinate{ .x = 5, .y = 1 },
-                            };
+                            self.lockCurrentPiece();
                             break;
                         }
                     }
@@ -571,11 +602,13 @@ fn run() !void {
         const stdout = std.fs.File.stdout();
         _ = stdout.write("\x1b[2J\x1b[H") catch 0;
 
+        //std.debug.print("AI STARTING\n", .{});
         if (game.current != null and game.current.?.position.y <= 1) {
             const potentialActions = [_][]const Action{
                 &.{Action.left},
                 &.{ Action.left, Action.left },
                 &.{ Action.left, Action.left, Action.left },
+                &.{ Action.left, Action.left, Action.left, Action.left },
                 &.{Action.right},
                 &.{ Action.right, Action.right },
                 &.{ Action.right, Action.right, Action.right },
@@ -588,12 +621,14 @@ fn run() !void {
                 &.{ Action.rotate_ccw, Action.left },
                 &.{ Action.rotate_ccw, Action.left, Action.left },
                 &.{ Action.rotate_ccw, Action.left, Action.left, Action.left },
+                &.{ Action.rotate_ccw, Action.left, Action.left, Action.left, Action.left },
                 &.{ Action.rotate_ccw, Action.right },
                 &.{ Action.rotate_ccw, Action.right, Action.right },
                 &.{ Action.rotate_ccw, Action.right, Action.right, Action.right },
                 &.{ Action.rotate_cw, Action.rotate_cw, Action.left },
                 &.{ Action.rotate_cw, Action.rotate_cw, Action.left, Action.left },
                 &.{ Action.rotate_cw, Action.rotate_cw, Action.left, Action.left, Action.left },
+                &.{ Action.rotate_cw, Action.rotate_cw, Action.left, Action.left, Action.left, Action.left },
                 &.{ Action.rotate_cw, Action.rotate_cw, Action.right },
                 &.{ Action.rotate_cw, Action.rotate_cw, Action.right, Action.right },
                 &.{ Action.rotate_cw, Action.rotate_cw, Action.right, Action.right, Action.right },
@@ -644,7 +679,7 @@ fn run() !void {
                         err += std.math.pow(i32, (@as(i32, @intCast(height)) - averageHeight), 2);
                     }
                     for (holes) |hole| {
-                        err += @as(i32, @intCast(hole)) * 5;
+                        err += @as(i32, @intCast(hole)) * 25;
                     }
                     // Debug logging for this candidate (use bufPrint + writeAll)
                     try writeFmt(log_file, "actions: {any}\n", .{as});
@@ -673,6 +708,7 @@ fn run() !void {
         while (ai.pendingActions.pop()) |action| {
             game.apply(action);
         }
+        //std.debug.print("REAL STARTING\n", .{});
         update(&game);
         std.debug.print("\n\n", .{});
         try render(game, stdout);
@@ -692,7 +728,6 @@ fn update(game: *Game) void {
     p.y += 1;
 
     const currentPiece = game.current.?;
-    const currentT = currentPiece.tetromino;
     const pattern = currentPiece.pattern();
     var blocked = false;
 
@@ -710,16 +745,7 @@ fn update(game: *Game) void {
     }
 
     if (blocked and game.state == GameState.running) {
-        for (pattern) |offset| {
-            const location = p.add(offset);
-
-            game.setAt(location, currentT.block);
-        }
-        game.current = .{
-            .tetromino = game.nextPiece(),
-            .orientation = Direction.north,
-            .position = Coordinate{ .x = 5, .y = 1 },
-        };
+        game.lockCurrentPiece();
     }
 }
 
