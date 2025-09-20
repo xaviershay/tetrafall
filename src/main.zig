@@ -360,11 +360,6 @@ fn run() error{OutOfMemory}!void {
         .rng = rng.LCG.init(123),
         .playfield = try allocator.alloc(Block, spec.totalCells()),
         .current = null,
-        // .{
-        //     .position = Coordinate{ .x = 0, .y = 0 },
-        //     .orientation = Direction.north,
-        //     .pattern = &[_]Coordinate{},
-        // },
     };
     @memset(game.playfield, Block.none);
 
