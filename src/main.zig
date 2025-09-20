@@ -1,3 +1,5 @@
+const std = @import("std");
+
 const GameSpec = struct { width: u8, height: u8 };
 const Block = enum { none, garbage, z, s, j, l, t, o, i };
 const Direction = enum { north, east, south, west };
@@ -10,7 +12,21 @@ const Game = struct {
     current: ?struct { position: Coordinate, orientation: Direction, tetromino: Tetromino },
 };
 
-const std = @import("std");
+const t = Tetromino{
+    .block = Block.t,
+    .pattern = [4]Coordinate{
+        Coordinate{ .x = 0, .y = 0 },
+        Coordinate{ .x = -1, .y = 1 },
+        Coordinate{ .x = 0, .y = 1 },
+        Coordinate{ .x = 1, .y = 1 },
+    },
+};
+
+pub fn main() void {
+    run() catch |err| {
+        std.debug.print("Allocation failed: {s}\n", .{@errorName(err)});
+    };
+}
 
 fn run() error{OutOfMemory}!void {
     //var rng = SimpleRNG.init(12345);
@@ -34,22 +50,38 @@ fn run() error{OutOfMemory}!void {
     };
     @memset(game.playfield, Block.none);
 
-    const t = Tetromino{
-        .block = Block.t,
-        .pattern = [4]Coordinate{
-            Coordinate{ .x = 0, .y = 0 },
-            Coordinate{ .x = -1, .y = 1 },
-            Coordinate{ .x = 0, .y = 1 },
-            Coordinate{ .x = 1, .y = 1 },
-        },
-    };
+    while (true) {
+        // Not in render so that we can dump debug stuff in update()
+        const stdout = std.fs.File.stdout();
+        _ = stdout.write("\x1b[2J\x1b[H") catch 0;
 
-    game.current = .{
-        .tetromino = t,
-        .orientation = Direction.north,
-        .position = Coordinate{ .x = 5, .y = 10 },
-    };
+        update(&game);
+        try render(game);
+        std.Thread.sleep(1_000_000_00);
+    }
+}
 
+fn update(game: *Game) void {
+    if (game.current == null) {
+        game.current = .{
+            .tetromino = t,
+            .orientation = Direction.north,
+            .position = Coordinate{ .x = 5, .y = 0 },
+        };
+    }
+    var p = &game.current.?.position;
+    // TODO: Proper collision detection
+    if (p.y < game.spec.height - 3) {
+        p.y += 1;
+    }
+}
+
+fn render(game: Game) error{OutOfMemory}!void {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const spec = game.spec;
     const playfieldRender = try allocator.alloc(Block, spec.width * spec.height);
     @memcpy(playfieldRender, game.playfield);
 
@@ -69,6 +101,7 @@ fn run() error{OutOfMemory}!void {
     // Print playfield contents
     const playfield_slice = playfieldRender[0 .. spec.width * spec.height];
 
+    std.debug.print("\n\n\n----------", .{});
     for (0..spec.height - 1) |y| {
         for (0..spec.width - 1) |x| {
             const idx = y * spec.width + x;
@@ -84,11 +117,7 @@ fn run() error{OutOfMemory}!void {
         }
         std.debug.print("\n", .{});
     }
-}
-pub fn main() void {
-    run() catch |err| {
-        std.debug.print("Allocation failed: {s}\n", .{@errorName(err)});
-    };
+    std.debug.print("==========", .{});
 }
 
 // Simple Linear Congruential Generator (LCG)
