@@ -38,9 +38,9 @@ pub const LCG = struct {
         return @as(f32, @floatFromInt(self.next() - 1)) / 2147483646.0;
     }
 
-    // Generate random integer between min and max (inclusive)
+    // Generate random integer between min and max (exclusive)
     pub fn nextInt(self: *LCG, min: i32, max: i32) i32 {
-        const range = max - min + 1;
+        const range = max - min;
         return @as(i32, @intFromFloat(self.nextFloat() * @as(f32, @floatFromInt(range)))) + min;
     }
 

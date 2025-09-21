@@ -3,6 +3,14 @@ const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 
 const rng = @import("simple_rng.zig");
+const randomizers = @import("randomizers.zig");
+
+// Force inclusion of all module tests
+test {
+    std.testing.refAllDecls(@This());
+    std.testing.refAllDecls(rng);
+    std.testing.refAllDecls(randomizers);
+}
 
 const AI = struct { rng: rng.LCG, currentAction: Action, pendingActions: std.ArrayList(Action) };
 
@@ -283,6 +291,27 @@ const Game = struct {
     rng: rng.LCG,
     current: ?DroppingPiece,
 
+    fn init(allocator: std.mem.Allocator, tetrominos: []Tetromino) !Game {
+        const spec = GameSpec{ .dimensions = .{ .x = 10, .y = 22 } };
+        const game = Game{
+            .spec = spec,
+            .state = GameState.running,
+            .tetrominos = tetrominos,
+            .rng = rng.LCG.init(123),
+            .playfield = try allocator.alloc(Block, spec.totalCells()),
+            .current = null,
+        };
+        return game;
+    }
+
+    fn width(self: *const Game) usize {
+        return @intCast(self.spec.dimensions.x);
+    }
+
+    fn height(self: *const Game) usize {
+        return @intCast(self.spec.dimensions.y);
+    }
+
     fn clone(self: *const Game, allocator: std.mem.Allocator) !Game {
         var copy = Game{
             .spec = self.spec,
@@ -493,8 +522,6 @@ fn writeFmt(out: anytype, comptime fmt: []const u8, args: anytype) !void {
 }
 
 fn run() !void {
-    const spec = GameSpec{ .dimensions = .{ .x = 10, .y = 22 } };
-
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -581,14 +608,7 @@ fn run() !void {
             Coordinate{ .x = 1, .y = 0 },
         },
     };
-    var game = Game{
-        .spec = spec,
-        .state = GameState.running,
-        .tetrominos = tetrominos,
-        .rng = rng.LCG.init(123),
-        .playfield = try allocator.alloc(Block, spec.totalCells()),
-        .current = null,
-    };
+    var game = try Game.init(allocator, tetrominos);
     @memset(game.playfield, Block.none);
     game.current = .{
         .tetromino = game.nextPiece(),
@@ -648,8 +668,8 @@ fn run() !void {
                 if (gameCopy.state == GameState.halted) {
                     err = std.math.maxInt(i32);
                 } else {
-                    var heights = try allocator.alloc(usize, spec.dimensions.x);
-                    var holes = try allocator.alloc(usize, spec.dimensions.x);
+                    var heights = try allocator.alloc(usize, gameCopy.width());
+                    var holes = try allocator.alloc(usize, gameCopy.height());
                     var heightTotal: i32 = 0;
                     @memset(heights, 0);
                     @memset(holes, 0);
@@ -667,14 +687,14 @@ fn run() !void {
                             } else {
                                 if (block != Block.none) {
                                     foundHeight = true;
-                                    heights[x] = spec.dimensions.y - y;
+                                    heights[x] = gameCopy.height() - y;
                                     heightTotal += @intCast(heights[x]);
                                 }
                             }
                         }
                     }
 
-                    const averageHeight = @divFloor(heightTotal, spec.dimensions.x);
+                    const averageHeight = @divFloor(heightTotal, @as(i32, @intCast(gameCopy.width())));
                     for (heights) |height| {
                         err += std.math.pow(i32, (@as(i32, @intCast(height)) - averageHeight), 2);
                     }
