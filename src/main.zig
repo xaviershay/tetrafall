@@ -844,6 +844,10 @@ fn run() !void {
         //std.debug.print("AI STARTING\n", .{});
         if (game.current != null and game.current.?.position.y <= 1) {
             const potentialActions = [_][]const Action{
+                &.{},
+                &.{Action.rotate_cw},
+                &.{ Action.rotate_cw, Action.rotate_cw },
+                &.{Action.rotate_ccw},
                 &.{Action.left},
                 &.{ Action.left, Action.left },
                 &.{ Action.left, Action.left, Action.left },
