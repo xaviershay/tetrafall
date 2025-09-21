@@ -283,191 +283,192 @@ const DroppingPiece = struct {
 
 const Action = enum { left, right, rotate_cw, rotate_ccw, soft_drop, hard_drop };
 
-const Game = struct {
-    spec: GameSpec,
-    state: GameState,
-    tetrominos: []Tetromino,
-    playfield: []Block,
-    rng: rng.LCG,
-    current: ?DroppingPiece,
+fn GameG(comptime T: type) type {
+    return struct {
+        const Self = @This();
 
-    fn init(allocator: std.mem.Allocator, tetrominos: []Tetromino) !Game {
-        const spec = GameSpec{ .dimensions = .{ .x = 10, .y = 22 } };
-        const game = Game{
-            .spec = spec,
-            .state = GameState.running,
-            .tetrominos = tetrominos,
-            .rng = rng.LCG.init(123),
-            .playfield = try allocator.alloc(Block, spec.totalCells()),
-            .current = null,
-        };
-        return game;
-    }
+        spec: GameSpec,
+        state: GameState,
+        tetrominos: []Tetromino,
+        playfield: []Block,
+        rng: rng.LCG,
+        current: ?DroppingPiece,
+        randomizer: T,
 
-    fn width(self: *const Game) usize {
-        return @intCast(self.spec.dimensions.x);
-    }
-
-    fn height(self: *const Game) usize {
-        return @intCast(self.spec.dimensions.y);
-    }
-
-    fn clone(self: *const Game, allocator: std.mem.Allocator) !Game {
-        var copy = Game{
-            .spec = self.spec,
-            .state = self.state,
-            .tetrominos = self.tetrominos,
-            .rng = self.rng,
-            .playfield = self.playfield,
-            .current = self.current,
-        };
-        copy.playfield = try allocator.dupe(Block, self.playfield);
-        // tetrominos NOT copied because expected to be constant.
-        return copy;
-    }
-
-    fn indexFor(self: *const Game, coordinate: Coordinate) u8 {
-        return @as(u8, @intCast(coordinate.y)) * @as(u8, @intCast(self.spec.dimensions.x)) + @as(u8, @intCast(coordinate.x));
-    }
-
-    fn at(self: *const Game, coordinate: Coordinate) Block {
-        if (coordinate.inBounds(Coordinate{ .x = 0, .y = 0 }, self.spec.dimensions)) {
-            return self.playfield[self.indexFor(coordinate)];
-        } else {
-            return Block.oob;
-        }
-    }
-
-    fn setAt(self: *Game, coordinate: Coordinate, block: Block) void {
-        if (coordinate.inBounds(Coordinate{ .x = 0, .y = 0 }, self.spec.dimensions)) {
-            self.playfield[self.indexFor(coordinate)] = block;
-        }
-    }
-
-    fn nextPiece(self: *Game) Tetromino {
-        return self.tetrominos[self.rng.nextUint() % self.tetrominos.len];
-    }
-
-    fn lockCurrentPiece(self: *Game) void {
-        //std.debug.print("===> LOCKING PIECE <=== ", .{});
-        // Copy current piece to playfield
-        const pattern = rotate(self.current.?.orientation, self.current.?.tetromino.pattern);
-        for (pattern) |offset| {
-            const location = self.current.?.position.add(offset);
-
-            self.setAt(location, self.current.?.tetromino.block);
+        fn init(allocator: std.mem.Allocator, tetrominos: []Tetromino, randomizer: T) !Self {
+            const spec = GameSpec{ .dimensions = .{ .x = 10, .y = 22 } };
+            const game = Self{
+                .spec = spec,
+                .state = GameState.running,
+                .tetrominos = tetrominos,
+                .rng = rng.LCG.init(123),
+                .playfield = try allocator.alloc(Block, spec.totalCells()),
+                .current = null,
+                .randomizer = randomizer,
+            };
+            return game;
         }
 
-        // Score any lines.
-        for (0..@intCast(self.spec.dimensions.y)) |y| {
-            const rowIndex = @as(u8, @intCast(self.spec.dimensions.y)) - y - 1;
-            var line = true;
-            var empty = true;
-            for (0..@intCast(self.spec.dimensions.x)) |x| {
-                //std.debug.print("{any} ", .{self.at(Coordinate.fromU(x, rowIndex))});
-                if (self.at(Coordinate.fromU(x, rowIndex)) == Block.none) {
-                    line = false;
-                } else {
-                    empty = false;
-                }
-                if (!line and !empty) break;
+        fn width(self: *const Self) usize {
+            return @intCast(self.spec.dimensions.x);
+        }
+
+        fn height(self: *const Self) usize {
+            return @intCast(self.spec.dimensions.y);
+        }
+
+        fn clone(self: *const Self, allocator: std.mem.Allocator) !Self {
+            var copy = Self{ .spec = self.spec, .state = self.state, .tetrominos = self.tetrominos, .rng = self.rng, .playfield = self.playfield, .current = self.current, .randomizer = try self.randomizer.clone(allocator) };
+            copy.playfield = try allocator.dupe(Block, self.playfield);
+            // tetrominos NOT copied because expected to be constant.
+            return copy;
+        }
+
+        fn indexFor(self: *const Self, coordinate: Coordinate) u8 {
+            return @as(u8, @intCast(coordinate.y)) * @as(u8, @intCast(self.spec.dimensions.x)) + @as(u8, @intCast(coordinate.x));
+        }
+
+        fn at(self: *const Self, coordinate: Coordinate) Block {
+            if (coordinate.inBounds(Coordinate{ .x = 0, .y = 0 }, self.spec.dimensions)) {
+                return self.playfield[self.indexFor(coordinate)];
+            } else {
+                return Block.oob;
             }
-            //std.debug.print("\n", .{});
-            if ((line or empty) and rowIndex > 0) {
+        }
+
+        fn setAt(self: *Self, coordinate: Coordinate, block: Block) void {
+            if (coordinate.inBounds(Coordinate{ .x = 0, .y = 0 }, self.spec.dimensions)) {
+                self.playfield[self.indexFor(coordinate)] = block;
+            }
+        }
+
+        fn nextPiece(self: *Self) Tetromino {
+            return self.tetrominos[self.rng.nextUint() % self.tetrominos.len];
+        }
+
+        fn lockCurrentPiece(self: *Self) void {
+            //std.debug.print("===> LOCKING PIECE <=== ", .{});
+            // Copy current piece to playfield
+            const pattern = rotate(self.current.?.orientation, self.current.?.tetromino.pattern);
+            for (pattern) |offset| {
+                const location = self.current.?.position.add(offset);
+
+                self.setAt(location, self.current.?.tetromino.block);
+            }
+
+            // Score any lines.
+            for (0..@intCast(self.spec.dimensions.y)) |y| {
+                const rowIndex = @as(u8, @intCast(self.spec.dimensions.y)) - y - 1;
+                var line = true;
+                var empty = true;
                 for (0..@intCast(self.spec.dimensions.x)) |x| {
-                    const from = Coordinate.fromU(x, rowIndex - 1);
-                    const to = Coordinate.fromU(x, rowIndex);
-                    self.setAt(to, self.at(from));
-                    self.setAt(from, Block.none);
+                    //std.debug.print("{any} ", .{self.at(Coordinate.fromU(x, rowIndex))});
+                    if (self.at(Coordinate.fromU(x, rowIndex)) == Block.none) {
+                        line = false;
+                    } else {
+                        empty = false;
+                    }
+                    if (!line and !empty) break;
+                }
+                //std.debug.print("\n", .{});
+                if ((line or empty) and rowIndex > 0) {
+                    for (0..@intCast(self.spec.dimensions.x)) |x| {
+                        const from = Coordinate.fromU(x, rowIndex - 1);
+                        const to = Coordinate.fromU(x, rowIndex);
+                        self.setAt(to, self.at(from));
+                        self.setAt(from, Block.none);
+                    }
                 }
             }
+
+            self.current = .{
+                .tetromino = self.nextPiece(),
+                .orientation = Direction.north,
+                .position = Coordinate{ .x = 5, .y = 1 },
+            };
         }
 
-        self.current = .{
-            .tetromino = self.nextPiece(),
-            .orientation = Direction.north,
-            .position = Coordinate{ .x = 5, .y = 1 },
-        };
-    }
+        fn apply(self: *Self, action: Action) void {
+            switch (action) {
+                Action.left => {
+                    if (self.current != null) {
+                        var piece = self.current.?;
+                        piece.position.x -= 1;
 
-    fn apply(self: *Game, action: Action) void {
-        switch (action) {
-            Action.left => {
-                if (self.current != null) {
-                    var piece = self.current.?;
-                    piece.position.x -= 1;
-
-                    if (self.isValidPiece(piece)) {
-                        self.current.?.position.x -= 1;
-                    }
-                }
-            },
-            Action.right => {
-                if (self.current != null) {
-                    var piece = self.current.?;
-                    piece.position.x += 1;
-
-                    if (self.isValidPiece(piece)) {
-                        self.current.?.position.x += 1;
-                    }
-                }
-            },
-            Action.rotate_cw => {
-                if (self.current != null) {
-                    var piece = self.current.?;
-                    const newOrientation = Direction.rotate_cw(piece.orientation);
-                    piece.orientation = newOrientation;
-
-                    if (self.isValidPiece(piece)) {
-                        self.current.?.orientation = newOrientation;
-                    }
-                }
-            },
-            Action.rotate_ccw => {
-                if (self.current != null) {
-                    var piece = self.current.?;
-                    const newOrientation = Direction.rotate_ccw(piece.orientation);
-                    piece.orientation = newOrientation;
-
-                    if (self.isValidPiece(piece)) {
-                        self.current.?.orientation = newOrientation;
-                    }
-                }
-            },
-            Action.hard_drop => {
-                if (self.current != null) {
-                    var piece = self.current.?;
-                    while (true) {
-                        piece.position.y += 1;
-
-                        if (!self.isValidPiece(piece)) {
-                            self.current.?.position.y = piece.position.y - 1;
-                            self.lockCurrentPiece();
-                            break;
+                        if (self.isValidPiece(piece)) {
+                            self.current.?.position.x -= 1;
                         }
                     }
-                }
-            },
-            else => {},
-        }
-    }
+                },
+                Action.right => {
+                    if (self.current != null) {
+                        var piece = self.current.?;
+                        piece.position.x += 1;
 
-    fn isValidPiece(self: *const Game, piece: DroppingPiece) bool {
-        const pattern = rotate(piece.orientation, piece.tetromino.pattern);
+                        if (self.isValidPiece(piece)) {
+                            self.current.?.position.x += 1;
+                        }
+                    }
+                },
+                Action.rotate_cw => {
+                    if (self.current != null) {
+                        var piece = self.current.?;
+                        const newOrientation = Direction.rotate_cw(piece.orientation);
+                        piece.orientation = newOrientation;
 
-        var blocked = false;
+                        if (self.isValidPiece(piece)) {
+                            self.current.?.orientation = newOrientation;
+                        }
+                    }
+                },
+                Action.rotate_ccw => {
+                    if (self.current != null) {
+                        var piece = self.current.?;
+                        const newOrientation = Direction.rotate_ccw(piece.orientation);
+                        piece.orientation = newOrientation;
 
-        for (pattern) |offset| {
-            const location = piece.position.add(offset);
+                        if (self.isValidPiece(piece)) {
+                            self.current.?.orientation = newOrientation;
+                        }
+                    }
+                },
+                Action.hard_drop => {
+                    if (self.current != null) {
+                        var piece = self.current.?;
+                        while (true) {
+                            piece.position.y += 1;
 
-            if (self.at(location) != Block.none) {
-                blocked = true;
-                break;
+                            if (!self.isValidPiece(piece)) {
+                                self.current.?.position.y = piece.position.y - 1;
+                                self.lockCurrentPiece();
+                                break;
+                            }
+                        }
+                    }
+                },
+                else => {},
             }
         }
-        return !blocked;
-    }
-};
+
+        fn isValidPiece(self: *const Self, piece: DroppingPiece) bool {
+            const pattern = rotate(piece.orientation, piece.tetromino.pattern);
+
+            var blocked = false;
+
+            for (pattern) |offset| {
+                const location = piece.position.add(offset);
+
+                if (self.at(location) != Block.none) {
+                    blocked = true;
+                    break;
+                }
+            }
+            return !blocked;
+        }
+    };
+}
+
+const Game = GameG(randomizers.Bag(Tetromino));
 
 test "Game#clone()" {
     const testTetromino = Tetromino{ .block = Block.s, .pattern = [4]Coordinate{
@@ -608,7 +609,8 @@ fn run() !void {
             Coordinate{ .x = 1, .y = 0 },
         },
     };
-    var game = try Game.init(allocator, tetrominos);
+    const randomizer = randomizers.Bag(Tetromino).init(allocator, 7, tetrominos);
+    var game = try Game.init(allocator, tetrominos, randomizer);
     @memset(game.playfield, Block.none);
     game.current = .{
         .tetromino = game.nextPiece(),

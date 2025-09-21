@@ -8,10 +8,25 @@ pub fn Bag(comptime T: type) type {
         initialPieces: []const T,
         contents: std.ArrayList(T),
 
-        fn init(allocator: std.mem.Allocator, size: u32, initialPieces: []const T) Self {
+        pub fn init(allocator: std.mem.Allocator, size: u32, initialPieces: []const T) Self {
             const contents = std.ArrayList(T).initCapacity(allocator, size) catch unreachable;
             var bag = Self{ .size = size, .initialPieces = initialPieces, .contents = contents };
             bag.fill(initialPieces);
+            return bag;
+        }
+
+        pub fn select(self: *Self, r: anytype) ?T {
+            if (self.contents.items.len == 0) {
+                self.fill(self.initialPieces);
+            }
+
+            const i = r.nextInt(0, @intCast(self.contents.items.len));
+
+            return self.contents.orderedRemove(@intCast(i));
+        }
+
+        pub fn clone(self: *const Self, allocator: std.mem.Allocator) !Self {
+            const bag = Self{ .size = self.size, .initialPieces = self.initialPieces, .contents = try self.contents.clone(allocator) };
             return bag;
         }
 
@@ -21,16 +36,6 @@ pub fn Bag(comptime T: type) type {
                 self.contents.appendAssumeCapacity(pieces[i % pieces.len]);
             }
             std.debug.assert(self.contents.items.len > 0);
-        }
-
-        fn select(self: *Self, r: anytype) ?T {
-            if (self.contents.items.len == 0) {
-                self.fill(self.initialPieces);
-            }
-
-            const i = r.nextInt(0, @intCast(self.contents.items.len));
-
-            return self.contents.orderedRemove(@intCast(i));
         }
     };
 }
