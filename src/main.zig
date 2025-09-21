@@ -3,13 +3,11 @@ const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 
 const rng = @import("simple_rng.zig");
-const randomizers = @import("randomizers.zig");
 
 // Force inclusion of all module tests
 test {
     std.testing.refAllDecls(@This());
     std.testing.refAllDecls(rng);
-    std.testing.refAllDecls(randomizers);
 }
 
 const AI = struct { rng: rng.LCG, currentAction: Action, pendingActions: std.ArrayList(Action) };
@@ -299,9 +297,9 @@ const Game = struct {
     playfield: []Block,
     rng: rng.LCG,
     current: ?DroppingPiece,
-    randomizer: randomizers.Randomizer(Tetromino),
+    randomizer: Randomizer,
 
-    fn init(allocator: std.mem.Allocator, tetrominos: []Tetromino, randomizer: randomizers.Randomizer(Tetromino)) !Self {
+    fn init(allocator: std.mem.Allocator, tetrominos: []Tetromino, randomizer: Randomizer) !Self {
         const spec = GameSpec{ .dimensions = .{ .x = 10, .y = 22 } };
         const game = Self{
             .spec = spec,
@@ -527,6 +525,144 @@ fn writeFmt(out: anytype, comptime fmt: []const u8, args: anytype) !void {
     try out.writeAll(s);
 }
 
+// Random piece selection
+pub fn OG1985(allocator: std.mem.Allocator, pieces: []Tetromino) !Randomizer {
+    var x = try Randomizer.init(allocator, pieces, pieces.len, 0);
+    x.bagRefill = RefillStrategy.selected;
+    x.memory = 0;
+    x.retries = 0;
+    return x;
+}
+
+// Try once to avoid last piece
+pub fn NES(allocator: std.mem.Allocator, pieces: []Tetromino) !Randomizer {
+    var x = try Randomizer.init(allocator, pieces, pieces.len, 0);
+    x.bagRefill = RefillStrategy.selected;
+    x.memory = 1;
+    x.retries = 1;
+    return x;
+}
+
+// 7-Bag Randomizer
+pub fn TetrisWorlds(allocator: std.mem.Allocator, pieces: []Tetromino) !Randomizer {
+    var x = try Randomizer.init(allocator, pieces, pieces.len, 0);
+    x.bagRefill = RefillStrategy.full;
+    x.memory = 0;
+    x.retries = 0;
+    return x;
+}
+
+// Try four times to avoid last four pieces.
+pub fn TGM(allocator: std.mem.Allocator, pieces: []Tetromino) !Randomizer {
+    var x = try Randomizer.init(allocator, pieces, pieces.len, 4);
+    x.retries = 4;
+    var z: ?Tetromino = null;
+    for (pieces) |p| {
+        if (p.block == Block.z) {
+            z = p;
+            break;
+        }
+    }
+    x.bagRefill = RefillStrategy.full;
+    x.selected(z.?);
+    x.selected(z.?);
+    x.selected(z.?);
+    x.selected(z.?);
+    x.bagRefill = RefillStrategy.selected;
+    return x;
+}
+
+const RefillStrategy = enum { selected, least, full };
+const Randomizer = struct {
+    const Self = @This();
+
+    bagContents: std.ArrayList(Tetromino),
+    bagSize: usize,
+    bagRefill: RefillStrategy,
+    history: std.ArrayList(Tetromino),
+    memory: usize,
+    retries: usize,
+    avoidInitialOverhang: []Tetromino,
+    pieces: []Tetromino,
+
+    fn init(allocator: std.mem.Allocator, pieces: []Tetromino, bagSize: usize, memory: usize) !Randomizer {
+        var x = Randomizer{ .bagContents = std.ArrayList(Tetromino).empty, .bagSize = bagSize, .bagRefill = RefillStrategy.selected, .history = std.ArrayList(Tetromino).empty, .memory = memory, .retries = 0, .avoidInitialOverhang = &.{}, .pieces = pieces };
+        x.bagContents = try std.ArrayList(Tetromino).initCapacity(allocator, x.bagSize);
+        x.history = try std.ArrayList(Tetromino).initCapacity(allocator, x.memory);
+        x.fill();
+        return x;
+    }
+
+    fn select(self: *Self, r: anytype) Tetromino {
+        var selection: ?Tetromino = null;
+        var ri: usize = 0;
+        var tried: usize = 0;
+
+        while (true) {
+            var retry = false;
+            ri = @intCast(r.nextInt(0, @intCast(self.bagContents.items.len)));
+            selection = self.bagContents.items[ri];
+
+            for (self.avoidInitialOverhang) |to_avoid| {
+                if (selection.?.equal(&to_avoid)) {
+                    retry = true;
+                    self.avoidInitialOverhang = &.{};
+                    break;
+                }
+            }
+            for (0..self.history.items.len) |i| {
+                if (selection.?.equal(&self.history.items[i])) {
+                    tried += 1;
+                    retry = true;
+                    break;
+                }
+            }
+
+            if (retry) {
+                if (tried > self.retries) {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        return self.bagContents.orderedRemove(@intCast(ri));
+    }
+
+    pub fn selected(self: *Self, x: Tetromino) void {
+        switch (self.bagRefill) {
+            RefillStrategy.selected => {
+                self.bagContents.insertAssumeCapacity(0, x);
+            },
+            RefillStrategy.full => {
+                if (self.bagContents.items.len == 0) {
+                    self.fill();
+                }
+            },
+            RefillStrategy.least => {
+                @panic("unimplemented");
+            },
+        }
+        if (self.history.items.len >= self.memory) {
+            _ = self.history.pop();
+        }
+        self.history.insertAssumeCapacity(0, x);
+    }
+
+    pub fn clone(self: *const Self, allocator: std.mem.Allocator) !Self {
+        return Randomizer{ .bagContents = try self.bagContents.clone(allocator), .bagSize = self.bagSize, .bagRefill = self.bagRefill, .history = try self.history.clone(allocator), .memory = self.memory, .retries = self.retries, .avoidInitialOverhang = self.avoidInitialOverhang, .pieces = self.pieces };
+    }
+
+    fn fill(self: *Self) void {
+        std.debug.assert(self.bagContents.items.len == 0);
+        for (0..self.bagSize) |i| {
+            self.bagContents.appendAssumeCapacity(self.pieces[i % self.pieces.len]);
+        }
+        std.debug.assert(self.bagContents.items.len > 0);
+    }
+};
+
 fn run() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -614,9 +750,10 @@ fn run() !void {
             Coordinate{ .x = 1, .y = 0 },
         },
     };
-    //const randomizer = randomizers.OG1985(Tetromino, tetrominos);
-    //const randomizer = randomizers.TetrisWorlds(Tetromino, tetrominos, allocator);
-    const randomizer = randomizers.NES(Tetromino, tetrominos, allocator);
+    //const randomizer = try OG1985(allocator, tetrominos);
+    //const randomizer = try NES(allocator, tetrominos);
+    //const randomizer = try TetrisWorlds(allocator, tetrominos);
+    const randomizer = try TGM(allocator, tetrominos);
     var game = try Game.init(allocator, tetrominos, randomizer);
     @memset(game.playfield, Block.none);
     game.current = .{
