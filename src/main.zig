@@ -75,7 +75,14 @@ test "coordinate.inBounds()" {
     try expect(!x.inBounds(.{ .x = 1, .y = 11 }, .{ .x = 1, .y = 11 }));
 }
 
-const Tetromino = struct { pattern: [4]Coordinate, block: Block };
+const Tetromino = struct {
+    pattern: [4]Coordinate,
+    block: Block,
+
+    pub fn equal(self: *const Tetromino, other: *const Tetromino) bool {
+        return self.block == other.block;
+    }
+};
 
 fn maximum(comptime T: type, a: T, b: T) T {
     return if (a > b) a else b;
@@ -342,7 +349,9 @@ const Game = struct {
     }
 
     fn nextPiece(self: *Self) Tetromino {
-        return self.randomizer.select(&self.rng);
+        const piece = self.randomizer.select(&self.rng);
+        self.randomizer.selected(piece);
+        return piece;
     }
 
     fn lockCurrentPiece(self: *Self) void {
@@ -606,7 +615,8 @@ fn run() !void {
         },
     };
     //const randomizer = randomizers.OG1985(Tetromino, tetrominos);
-    const randomizer = randomizers.TetrisWorlds(Tetromino, tetrominos, allocator);
+    //const randomizer = randomizers.TetrisWorlds(Tetromino, tetrominos, allocator);
+    const randomizer = randomizers.NES(Tetromino, tetrominos, allocator);
     var game = try Game.init(allocator, tetrominos, randomizer);
     @memset(game.playfield, Block.none);
     game.current = .{

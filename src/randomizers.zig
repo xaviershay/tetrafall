@@ -9,11 +9,50 @@ pub fn TetrisWorlds(comptime T: type, pieces: []T, allocator: std.mem.Allocator)
 }
 
 pub fn NES(comptime T: type, pieces: []T, allocator: std.mem.Allocator) Randomizer(T) {
-    const subRandomizer = OG1985(T, pieces);
-    return Randomizer(T){ .avoidRecent = AvoidRecent(T).init(pieces, allocator, subRandomizer, 1, 1) };
+    const subRandomizer = TerminalRandomizer(T){ .uniform = Uniform(T).init(pieces) };
+    return Randomizer(T){ .avoidRecent = try AvoidRecent(T).init(pieces, allocator, subRandomizer, 1, 1) };
 }
 
 pub fn Randomizer(comptime T: type) type {
+    return union(enum) {
+        const Self = @This();
+
+        uniform: Uniform(T),
+        bag: Bag(T),
+        avoidRecent: AvoidRecent(T),
+
+        pub fn select(self: *Self, r: anytype) T {
+            switch (self.*) {
+                inline else => |*case| return case.select(r),
+            }
+        }
+
+        pub fn selected(self: *Self, x: T) void {
+            switch (self.*) {
+                inline else => |*case| return case.selected(x),
+            }
+        }
+
+        pub fn clone(self: *const Self, allocator: std.mem.Allocator) !Self {
+            switch (self.*) {
+                .uniform => |case| {
+                    return Randomizer(T){ .uniform = try case.clone(allocator) };
+                },
+                .bag => |case| {
+                    return Randomizer(T){ .bag = try case.clone(allocator) };
+                },
+                .avoidRecent => |case| {
+                    return Randomizer(T){ .avoidRecent = try case.clone(allocator) };
+                },
+            }
+        }
+    };
+}
+
+// A terminal randomizer cannot depend on other randomizers. This is necessary
+// since we can't have Randomizer depend on itself which is what happens with
+// meta-Randomizers like AvoidRecent.
+fn TerminalRandomizer(comptime T: type) type {
     return union(enum) {
         const Self = @This();
 
@@ -23,6 +62,12 @@ pub fn Randomizer(comptime T: type) type {
         pub fn select(self: *Self, r: anytype) T {
             switch (self.*) {
                 inline else => |*case| return case.select(r),
+            }
+        }
+
+        pub fn selected(self: *Self, x: T) void {
+            switch (self.*) {
+                inline else => |*case| return case.selected(x),
             }
         }
 
@@ -55,6 +100,8 @@ fn Uniform(comptime T: type) type {
             return self.pieces[@intCast(i)];
         }
 
+        pub fn selected(_: *Self, _: T) void {}
+
         pub fn clone(self: *const Self, _: std.mem.Allocator) !Self {
             return self.*;
         }
@@ -69,9 +116,9 @@ fn AvoidRecent(comptime T: type) type {
         history: std.ArrayList(T),
         retries: u8,
         memory: u8,
-        subRandomizer: Randomizer(T),
+        subRandomizer: TerminalRandomizer(T),
 
-        pub fn init(pieces: []T, allocator: std.mem.Allocator, subRandomizer: Randomizer(T), memory: u8, retries: u8) !Self {
+        pub fn init(pieces: []T, allocator: std.mem.Allocator, subRandomizer: TerminalRandomizer(T), memory: u8, retries: u8) !Self {
             const historyInit = std.ArrayList(T).initCapacity(allocator, memory) catch unreachable;
             return Self{
                 .pieces = pieces,
@@ -86,8 +133,8 @@ fn AvoidRecent(comptime T: type) type {
             for (0..self.retries) |_| {
                 var retry = false;
                 const selection = self.subRandomizer.select(r);
-                for (self.history) |priorSelection| {
-                    if (selection == priorSelection) {
+                for (0..self.history.items.len) |i| {
+                    if (selection.equal(&self.history.items[i])) {
                         retry = true;
                         continue;
                     }
@@ -98,10 +145,16 @@ fn AvoidRecent(comptime T: type) type {
             }
             return self.subRandomizer.select(r);
         }
-        // TODO: Need to know about recent pieces
+
+        pub fn selected(self: *Self, x: T) void {
+            if (self.history.items.len >= self.memory) {
+                _ = self.history.pop();
+            }
+            self.history.insertAssumeCapacity(0, x);
+        }
 
         pub fn clone(self: *const Self, allocator: std.mem.Allocator) !Self {
-            return Self{ .pieces = self.pieces, .subRandomizer = self.subRandomizer, .history = try self.history.clone(allocator) };
+            return Self{ .retries = self.retries, .memory = self.memory, .pieces = self.pieces, .subRandomizer = self.subRandomizer, .history = try self.history.clone(allocator) };
         }
     };
 }
@@ -130,6 +183,8 @@ fn Bag(comptime T: type) type {
 
             return self.contents.orderedRemove(@intCast(i));
         }
+
+        pub fn selected(_: *Self, _: T) void {}
 
         pub fn clone(self: *const Self, allocator: std.mem.Allocator) !Self {
             return Self{ .size = self.size, .initialPieces = self.initialPieces, .contents = try self.contents.clone(allocator) };
