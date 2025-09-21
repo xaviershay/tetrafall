@@ -298,6 +298,7 @@ const Game = struct {
     rng: rng.LCG,
     current: ?DroppingPiece,
     randomizer: Randomizer,
+    allocator: std.mem.Allocator,
 
     fn init(allocator: std.mem.Allocator, tetrominos: []Tetromino, randomizer: Randomizer) !Self {
         const spec = GameSpec{ .dimensions = .{ .x = 10, .y = 22 } };
@@ -309,6 +310,7 @@ const Game = struct {
             .playfield = try allocator.alloc(Block, spec.totalCells()),
             .current = null,
             .randomizer = randomizer,
+            .allocator = allocator,
         };
         return game;
     }
@@ -322,7 +324,7 @@ const Game = struct {
     }
 
     fn clone(self: *const Self, allocator: std.mem.Allocator) !Self {
-        var copy = Self{ .spec = self.spec, .state = self.state, .tetrominos = self.tetrominos, .rng = self.rng, .playfield = self.playfield, .current = self.current, .randomizer = try self.randomizer.clone(allocator) };
+        var copy = Self{ .spec = self.spec, .state = self.state, .tetrominos = self.tetrominos, .rng = self.rng, .playfield = self.playfield, .current = self.current, .randomizer = try self.randomizer.clone(allocator), .allocator = allocator };
         copy.playfield = try allocator.dupe(Block, self.playfield);
         // tetrominos NOT copied because expected to be constant.
         return copy;
@@ -346,13 +348,13 @@ const Game = struct {
         }
     }
 
-    fn nextPiece(self: *Self) Tetromino {
+    fn nextPiece(self: *Self) !Tetromino {
         const piece = self.randomizer.select(&self.rng);
-        self.randomizer.selected(piece);
+        try self.randomizer.selected(self.allocator, piece);
         return piece;
     }
 
-    fn lockCurrentPiece(self: *Self) void {
+    fn lockCurrentPiece(self: *Self) !void {
         //std.debug.print("===> LOCKING PIECE <=== ", .{});
         // Copy current piece to playfield
         const pattern = rotate(self.current.?.orientation, self.current.?.tetromino.pattern);
@@ -388,13 +390,13 @@ const Game = struct {
         }
 
         self.current = .{
-            .tetromino = self.nextPiece(),
+            .tetromino = try self.nextPiece(),
             .orientation = Direction.north,
             .position = Coordinate{ .x = 5, .y = 1 },
         };
     }
 
-    fn apply(self: *Self, action: Action) void {
+    fn apply(self: *Self, action: Action) !void {
         switch (action) {
             Action.left => {
                 if (self.current != null) {
@@ -446,7 +448,7 @@ const Game = struct {
 
                         if (!self.isValidPiece(piece)) {
                             self.current.?.position.y = piece.position.y - 1;
-                            self.lockCurrentPiece();
+                            try self.lockCurrentPiece();
                             break;
                         }
                     }
@@ -643,6 +645,14 @@ pub fn TGMA(allocator: std.mem.Allocator, pieces: []Tetromino) !Randomizer {
     return x;
 }
 
+// 35 bag randomizer, refilling least used piece.
+pub fn TGM3(allocator: std.mem.Allocator, pieces: []Tetromino) !Randomizer {
+    var x = try Randomizer.init(allocator, pieces, 35, 0);
+    x.bagRefill = RefillStrategy.least;
+    x.retries = 0;
+    return x;
+}
+
 const RefillStrategy = enum { selected, least, full };
 const Randomizer = struct {
     const Self = @This();
@@ -701,7 +711,7 @@ const Randomizer = struct {
         return self.bagContents.orderedRemove(@intCast(ri));
     }
 
-    pub fn selected(self: *Self, x: Tetromino) void {
+    pub fn selected(self: *Self, allocator: std.mem.Allocator, x: Tetromino) !void {
         switch (self.bagRefill) {
             RefillStrategy.selected => {
                 self.bagContents.insertAssumeCapacity(0, x);
@@ -712,7 +722,31 @@ const Randomizer = struct {
                 }
             },
             RefillStrategy.least => {
-                @panic("unimplemented");
+                var counts = std.AutoHashMap(Block, usize).init(allocator);
+                defer counts.deinit();
+                for (self.pieces) |p| {
+                    try counts.put(p.block, 0);
+                }
+                for (self.bagContents.items) |piece| {
+                    const existing = try counts.getOrPut(piece.block);
+                    existing.value_ptr.* += 1;
+                }
+                var minValue: usize = std.math.maxInt(usize);
+                var minBlock: ?Block = null;
+                var it = counts.keyIterator();
+                while (it.next()) |k| {
+                    const existing = try counts.getOrPut(k.*);
+                    if (existing.value_ptr.* < minValue) {
+                        minValue = existing.value_ptr.*;
+                        minBlock = k.*;
+                    }
+                }
+                for (self.pieces) |p| {
+                    if (p.block == minBlock) {
+                        self.bagContents.appendAssumeCapacity(p);
+                        break;
+                    }
+                }
             },
         }
         if (self.memory > 0) {
@@ -826,17 +860,16 @@ fn run() !void {
     //const randomizer = try OG1985(allocator, tetrominos);
     //const randomizer = try NES(allocator, tetrominos);
     //const randomizer = try TetrisWorlds(allocator, tetrominos);
-    const randomizer = try TGMA(allocator, tetrominos);
+    const randomizer = try TGM3(allocator, tetrominos);
     var game = try Game.init(allocator, tetrominos, randomizer);
     @memset(game.playfield, Block.none);
     game.current = .{
-        .tetromino = game.nextPiece(),
+        .tetromino = try game.nextPiece(),
         .orientation = Direction.north,
         .position = Coordinate{ .x = 5, .y = 1 },
     };
 
     while (game.state == GameState.running) {
-
         // Not in render so that we can dump debug stuff in update()
         const stdout = std.fs.File.stdout();
         _ = stdout.write("\x1b[2J\x1b[H") catch 0;
@@ -883,9 +916,9 @@ fn run() !void {
             for (potentialActions) |as| {
                 var gameCopy = try game.clone(allocator);
                 for (as) |a| {
-                    gameCopy.apply(a);
+                    try gameCopy.apply(a);
                 }
-                gameCopy.apply(Action.hard_drop);
+                try gameCopy.apply(Action.hard_drop);
 
                 var err: i32 = 0;
                 if (gameCopy.state == GameState.halted) {
@@ -949,20 +982,20 @@ fn run() !void {
         //    game.apply(action);
         //}
         while (ai.pendingActions.pop()) |action| {
-            game.apply(action);
+            try game.apply(action);
         }
         //std.debug.print("REAL STARTING\n", .{});
-        update(&game);
+        try update(&game);
         std.debug.print("\n\n", .{});
         try render(game, stdout);
         std.Thread.sleep(1_000_000_00 / 4);
     }
 }
 
-fn update(game: *Game) void {
+fn update(game: *Game) !void {
     if (game.current == null) {
         game.current = .{
-            .tetromino = game.nextPiece(),
+            .tetromino = try game.nextPiece(),
             .orientation = Direction.north,
             .position = Coordinate{ .x = 5, .y = 1 },
         };
@@ -988,7 +1021,7 @@ fn update(game: *Game) void {
     }
 
     if (blocked and game.state == GameState.running) {
-        game.lockCurrentPiece();
+        try game.lockCurrentPiece();
     }
 }
 
