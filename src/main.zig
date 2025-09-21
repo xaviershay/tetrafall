@@ -343,7 +343,7 @@ fn GameG(comptime T: type) type {
         }
 
         fn nextPiece(self: *Self) Tetromino {
-            return self.tetrominos[self.rng.nextUint() % self.tetrominos.len];
+            return self.randomizer.select(&self.rng);
         }
 
         fn lockCurrentPiece(self: *Self) void {

@@ -15,7 +15,7 @@ pub fn Bag(comptime T: type) type {
             return bag;
         }
 
-        pub fn select(self: *Self, r: anytype) ?T {
+        pub fn select(self: *Self, r: anytype) T {
             if (self.contents.items.len == 0) {
                 self.fill(self.initialPieces);
             }
