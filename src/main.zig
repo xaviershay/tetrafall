@@ -552,23 +552,94 @@ pub fn TetrisWorlds(allocator: std.mem.Allocator, pieces: []Tetromino) !Randomiz
     return x;
 }
 
-// Try four times to avoid last four pieces.
+// Try four times to avoid last four pieces. Never start with S, Z or O.
 pub fn TGM(allocator: std.mem.Allocator, pieces: []Tetromino) !Randomizer {
     var x = try Randomizer.init(allocator, pieces, pieces.len, 4);
     x.retries = 4;
     var z: ?Tetromino = null;
+    var s: ?Tetromino = null;
+    var o: ?Tetromino = null;
     for (pieces) |p| {
-        if (p.block == Block.z) {
-            z = p;
-            break;
+        switch (p.block) {
+            Block.z => {
+                z = p;
+            },
+            Block.s => {
+                s = p;
+            },
+            Block.o => {
+                o = p;
+            },
+            else => {},
         }
     }
+    const avoid: [3]Tetromino = .{ s.?, z.?, o.? };
+    x.avoidInitialOverhang = avoid[0..];
     x.bagRefill = RefillStrategy.full;
     x.selected(z.?);
     x.selected(z.?);
     x.selected(z.?);
     x.selected(z.?);
     x.bagRefill = RefillStrategy.selected;
+    return x;
+}
+
+// Try six times to avoid last four pieces. Never start with S, Z or O.
+pub fn TGM2(allocator: std.mem.Allocator, pieces: []Tetromino) !Randomizer {
+    var x = try Randomizer.init(allocator, pieces, pieces.len, 4);
+    x.retries = 6;
+    var z: ?Tetromino = null;
+    var s: ?Tetromino = null;
+    var o: ?Tetromino = null;
+    for (pieces) |p| {
+        switch (p.block) {
+            Block.z => {
+                z = p;
+            },
+            Block.s => {
+                s = p;
+            },
+            Block.o => {
+                o = p;
+            },
+            else => {},
+        }
+    }
+    const avoid: [3]Tetromino = .{ s.?, z.?, o.? };
+    x.avoidInitialOverhang = avoid[0..];
+    x.bagRefill = RefillStrategy.full;
+    x.selected(z.?);
+    x.selected(z.?);
+    x.selected(s.?);
+    x.selected(s.?);
+    x.bagRefill = RefillStrategy.selected;
+    return x;
+}
+
+// 7-Bag Randomizer. Never start with S, Z or O.
+pub fn TGMA(allocator: std.mem.Allocator, pieces: []Tetromino) !Randomizer {
+    var x = try Randomizer.init(allocator, pieces, pieces.len, 0);
+    var z: ?Tetromino = null;
+    var s: ?Tetromino = null;
+    var o: ?Tetromino = null;
+    for (pieces) |p| {
+        switch (p.block) {
+            Block.z => {
+                z = p;
+            },
+            Block.s => {
+                s = p;
+            },
+            Block.o => {
+                o = p;
+            },
+            else => {},
+        }
+    }
+    const avoid: [3]Tetromino = .{ s.?, z.?, o.? };
+    x.avoidInitialOverhang = avoid[0..];
+    x.bagRefill = RefillStrategy.full;
+    x.retries = 0;
     return x;
 }
 
@@ -582,11 +653,11 @@ const Randomizer = struct {
     history: std.ArrayList(Tetromino),
     memory: usize,
     retries: usize,
-    avoidInitialOverhang: []Tetromino,
+    avoidInitialOverhang: []const Tetromino,
     pieces: []Tetromino,
 
     fn init(allocator: std.mem.Allocator, pieces: []Tetromino, bagSize: usize, memory: usize) !Randomizer {
-        var x = Randomizer{ .bagContents = std.ArrayList(Tetromino).empty, .bagSize = bagSize, .bagRefill = RefillStrategy.selected, .history = std.ArrayList(Tetromino).empty, .memory = memory, .retries = 0, .avoidInitialOverhang = &.{}, .pieces = pieces };
+        var x = Randomizer{ .bagContents = std.ArrayList(Tetromino).empty, .bagSize = bagSize, .bagRefill = RefillStrategy.selected, .history = std.ArrayList(Tetromino).empty, .memory = memory, .retries = 0, .avoidInitialOverhang = ([0]Tetromino{})[0..], .pieces = pieces };
         x.bagContents = try std.ArrayList(Tetromino).initCapacity(allocator, x.bagSize);
         x.history = try std.ArrayList(Tetromino).initCapacity(allocator, x.memory);
         x.fill();
@@ -606,7 +677,7 @@ const Randomizer = struct {
             for (self.avoidInitialOverhang) |to_avoid| {
                 if (selection.?.equal(&to_avoid)) {
                     retry = true;
-                    self.avoidInitialOverhang = &.{};
+                    self.avoidInitialOverhang = ([0]Tetromino{})[0..];
                     break;
                 }
             }
@@ -644,10 +715,12 @@ const Randomizer = struct {
                 @panic("unimplemented");
             },
         }
-        if (self.history.items.len >= self.memory) {
-            _ = self.history.pop();
+        if (self.memory > 0) {
+            if (self.history.items.len >= self.memory) {
+                _ = self.history.pop();
+            }
+            self.history.insertAssumeCapacity(0, x);
         }
-        self.history.insertAssumeCapacity(0, x);
     }
 
     pub fn clone(self: *const Self, allocator: std.mem.Allocator) !Self {
@@ -753,7 +826,7 @@ fn run() !void {
     //const randomizer = try OG1985(allocator, tetrominos);
     //const randomizer = try NES(allocator, tetrominos);
     //const randomizer = try TetrisWorlds(allocator, tetrominos);
-    const randomizer = try TGM(allocator, tetrominos);
+    const randomizer = try TGMA(allocator, tetrominos);
     var game = try Game.init(allocator, tetrominos, randomizer);
     @memset(game.playfield, Block.none);
     game.current = .{
