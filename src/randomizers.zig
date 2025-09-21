@@ -1,6 +1,45 @@
 const std = @import("std");
 
-pub fn Uniform(comptime T: type) type {
+pub fn OG1985(comptime T: type, pieces: []T) Randomizer(T) {
+    return Randomizer(T){ .uniform = Uniform(T).init(pieces) };
+}
+
+pub fn TetrisWorlds(comptime T: type, pieces: []T, allocator: std.mem.Allocator) Randomizer(T) {
+    return Randomizer(T){ .bag = Bag(T).init(pieces, allocator, 7) };
+}
+
+pub fn NES(comptime T: type, pieces: []T, allocator: std.mem.Allocator) Randomizer(T) {
+    const subRandomizer = OG1985(T, pieces);
+    return Randomizer(T){ .avoidRecent = AvoidRecent(T).init(pieces, allocator, subRandomizer, 1, 1) };
+}
+
+pub fn Randomizer(comptime T: type) type {
+    return union(enum) {
+        const Self = @This();
+
+        uniform: Uniform(T),
+        bag: Bag(T),
+
+        pub fn select(self: *Self, r: anytype) T {
+            switch (self.*) {
+                inline else => |*case| return case.select(r),
+            }
+        }
+
+        pub fn clone(self: *const Self, allocator: std.mem.Allocator) !Self {
+            switch (self.*) {
+                .uniform => |case| {
+                    return Randomizer(T){ .uniform = try case.clone(allocator) };
+                },
+                .bag => |case| {
+                    return Randomizer(T){ .bag = try case.clone(allocator) };
+                },
+            }
+        }
+    };
+}
+
+fn Uniform(comptime T: type) type {
     return struct {
         const Self = @This();
 
@@ -22,17 +61,62 @@ pub fn Uniform(comptime T: type) type {
     };
 }
 
-pub fn Bag(comptime T: type) type {
+fn AvoidRecent(comptime T: type) type {
+    return struct {
+        const Self: type = @This();
+
+        pieces: []const T,
+        history: std.ArrayList(T),
+        retries: u8,
+        memory: u8,
+        subRandomizer: Randomizer(T),
+
+        pub fn init(pieces: []T, allocator: std.mem.Allocator, subRandomizer: Randomizer(T), memory: u8, retries: u8) !Self {
+            const historyInit = std.ArrayList(T).initCapacity(allocator, memory) catch unreachable;
+            return Self{
+                .pieces = pieces,
+                .history = historyInit,
+                .subRandomizer = subRandomizer,
+                .memory = memory,
+                .retries = retries,
+            };
+        }
+
+        pub fn select(self: *Self, r: anytype) T {
+            for (0..self.retries) |_| {
+                var retry = false;
+                const selection = self.subRandomizer.select(r);
+                for (self.history) |priorSelection| {
+                    if (selection == priorSelection) {
+                        retry = true;
+                        continue;
+                    }
+                }
+                if (!retry) {
+                    return selection;
+                }
+            }
+            return self.subRandomizer.select(r);
+        }
+        // TODO: Need to know about recent pieces
+
+        pub fn clone(self: *const Self, allocator: std.mem.Allocator) !Self {
+            return Self{ .pieces = self.pieces, .subRandomizer = self.subRandomizer, .history = try self.history.clone(allocator) };
+        }
+    };
+}
+
+fn Bag(comptime T: type) type {
     return struct {
         const Self = @This();
 
-        size: u32,
         initialPieces: []const T,
         contents: std.ArrayList(T),
+        size: u32,
 
-        pub fn init(allocator: std.mem.Allocator, size: u32, initialPieces: []const T) Self {
+        pub fn init(initialPieces: []const T, allocator: std.mem.Allocator, size: u32) Self {
             const contents = std.ArrayList(T).initCapacity(allocator, size) catch unreachable;
-            var bag = Self{ .size = size, .initialPieces = initialPieces, .contents = contents };
+            var bag = Self{ .initialPieces = initialPieces, .contents = contents, .size = size };
             bag.fill(initialPieces);
             return bag;
         }
@@ -48,8 +132,7 @@ pub fn Bag(comptime T: type) type {
         }
 
         pub fn clone(self: *const Self, allocator: std.mem.Allocator) !Self {
-            const bag = Self{ .size = self.size, .initialPieces = self.initialPieces, .contents = try self.contents.clone(allocator) };
-            return bag;
+            return Self{ .size = self.size, .initialPieces = self.initialPieces, .contents = try self.contents.clone(allocator) };
         }
 
         fn fill(self: *Self, pieces: []const T) void {
