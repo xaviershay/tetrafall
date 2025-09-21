@@ -468,7 +468,8 @@ fn GameG(comptime T: type) type {
     };
 }
 
-const Game = GameG(randomizers.Bag(Tetromino));
+//const Game = GameG(randomizers.Bag(Tetromino));
+const Game = GameG(randomizers.Uniform(Tetromino));
 
 test "Game#clone()" {
     const testTetromino = Tetromino{ .block = Block.s, .pattern = [4]Coordinate{
@@ -609,7 +610,8 @@ fn run() !void {
             Coordinate{ .x = 1, .y = 0 },
         },
     };
-    const randomizer = randomizers.Bag(Tetromino).init(allocator, 7, tetrominos);
+    //const randomizer = randomizers.Bag(Tetromino).init(allocator, 7, tetrominos);
+    const randomizer = randomizers.Uniform(Tetromino).init(tetrominos);
     var game = try Game.init(allocator, tetrominos, randomizer);
     @memset(game.playfield, Block.none);
     game.current = .{

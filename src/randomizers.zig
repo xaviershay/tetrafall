@@ -1,5 +1,27 @@
 const std = @import("std");
 
+pub fn Uniform(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        pieces: []const T,
+
+        pub fn init(pieces: []const T) Self {
+            return Self{ .pieces = pieces };
+        }
+
+        pub fn select(self: *Self, r: anytype) T {
+            const i = r.nextInt(0, @intCast(self.pieces.len));
+
+            return self.pieces[@intCast(i)];
+        }
+
+        pub fn clone(self: *const Self, _: std.mem.Allocator) !Self {
+            return self.*;
+        }
+    };
+}
+
 pub fn Bag(comptime T: type) type {
     return struct {
         const Self = @This();
